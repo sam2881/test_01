@@ -1,0 +1,66 @@
+---
+# Ansible playbook to install Nginx if not present
+# Used as a prerequisite before restart
+
+- name: Install and Configure Nginx
+  hosts: target_vm
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Update apt cache (Debian/Ubuntu)
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+
+    - name: Install Nginx (Debian/Ubuntu)
+      apt:
+        name: nginx
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Install Nginx (RedHat/CentOS)
+      yum:
+        name: nginx
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Ensure Nginx is started and enabled
+      systemd:
+        name: nginx
+        state: started
+        enabled: yes
+
+    - name: Allow HTTP through firewall (if ufw is present)
+      ufw:
+        rule: allow
+        port: '80'
+        proto: tcp
+      when: ansible_os_family == "Debian"
+      ignore_errors: yes
+
+    - name: Create simple index page
+      copy:
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>AI Agent Platform - VM Recovered</title>
+          </head>
+          <body>
+              <h1>VM Successfully Recovered by AI Agent!</h1>
+              <p>This VM was automatically recovered by the AI Agent Platform</p>
+              <p>Timestamp: {{ ansible_date_time.iso8601 }}</p>
+              <p>Hostname: {{ inventory_hostname }}</p>
+          </body>
+          </html>
+        dest: /var/www/html/index.nginx-debian.html
+      when: ansible_os_family == "Debian"
+
+    - name: Verify Nginx is running
+      uri:
+        url: "http://{{ ansible_default_ipv4.address }}"
+        status_code: 200
+      retries: 3
+      delay: 5

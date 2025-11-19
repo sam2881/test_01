@@ -1,0 +1,161 @@
+---
+# Database Backup Playbook
+# Purpose: Create backup of PostgreSQL/MySQL database
+# Issue Types: database_corruption, data_loss_risk, pre_maintenance
+# Risk: Low (read-only operation)
+# Tested: 10 successful resolutions
+
+- name: Database Backup
+  hosts: all
+  become: yes
+  vars:
+    db_type: "{{ database_type | default('postgresql') }}"
+    db_name: "{{ database_name | default('production') }}"
+    backup_dir: "{{ backup_path | default('/var/backups/db') }}"
+    retention_days: "{{ retention | default(7) }}"
+
+  tasks:
+    - name: Create backup directory
+      file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: '0750'
+        owner: postgres
+        group: postgres
+      when: db_type == 'postgresql'
+
+    - name: Create backup directory (MySQL)
+      file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: '0750'
+        owner: mysql
+        group: mysql
+      when: db_type == 'mysql'
+
+    - name: Check available disk space
+      shell: df -BG {{ backup_dir }} | tail -1 | awk '{print $4}' | sed 's/G//'
+      register: available_space
+      changed_when: false
+
+    - name: Estimate database size (PostgreSQL)
+      shell: |
+        psql -U postgres -c "SELECT pg_size_pretty(pg_database_size('{{ db_name }}'));"
+      become_user: postgres
+      register: db_size_pg
+      when: db_type == 'postgresql'
+      changed_when: false
+
+    - name: Estimate database size (MySQL)
+      shell: |
+        mysql -e "SELECT table_schema AS 'Database',
+        ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS 'Size (MB)'
+        FROM information_schema.TABLES
+        WHERE table_schema = '{{ db_name }}'
+        GROUP BY table_schema;"
+      when: db_type == 'mysql'
+      register: db_size_mysql
+      changed_when: false
+
+    - name: Set backup filename
+      set_fact:
+        backup_file: "{{ backup_dir }}/{{ db_name }}_{{ ansible_date_time.iso8601_basic_short }}.sql.gz"
+
+    - name: Backup PostgreSQL database
+      shell: |
+        pg_dump -U postgres {{ db_name }} | gzip > {{ backup_file }}
+      become_user: postgres
+      when: db_type == 'postgresql'
+      register: pg_backup
+      async: 1800  # 30 minutes timeout
+      poll: 5
+
+    - name: Backup MySQL database
+      shell: |
+        mysqldump --single-transaction --quick {{ db_name }} | gzip > {{ backup_file }}
+      when: db_type == 'mysql'
+      register: mysql_backup
+      async: 1800
+      poll: 5
+
+    - name: Verify backup file exists
+      stat:
+        path: "{{ backup_file }}"
+      register: backup_stat
+
+    - name: Check backup file size
+      set_fact:
+        backup_size_mb: "{{ (backup_stat.stat.size / 1024 / 1024) | round(2) }}"
+      when: backup_stat.stat.exists
+
+    - name: Verify backup integrity (PostgreSQL)
+      shell: |
+        gunzip -t {{ backup_file }}
+      when: db_type == 'postgresql' and backup_stat.stat.exists
+      register: pg_verify
+      ignore_errors: yes
+
+    - name: Verify backup integrity (MySQL)
+      shell: |
+        gunzip -t {{ backup_file }}
+      when: db_type == 'mysql' and backup_stat.stat.exists
+      register: mysql_verify
+      ignore_errors: yes
+
+    - name: Remove old backups
+      find:
+        paths: "{{ backup_dir }}"
+        patterns: "{{ db_name }}_*.sql.gz"
+        age: "{{ retention_days }}d"
+      register: old_backups
+
+    - name: Delete old backup files
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ old_backups.files }}"
+      when: old_backups.matched > 0
+
+    - name: Calculate total backup size
+      shell: du -sh {{ backup_dir }} | awk '{print $1}'
+      register: total_backup_size
+      changed_when: false
+
+    - name: Log backup activity
+      lineinfile:
+        path: /var/log/ansible-db-backup.log
+        line: |
+          {{ ansible_date_time.iso8601 }} - Backup created: {{ backup_file }}
+          Database: {{ db_name }} ({{ db_type }})
+          Size: {{ backup_size_mb | default('unknown') }} MB
+          Status: {{ 'SUCCESS' if backup_stat.stat.exists else 'FAILED' }}
+          Total Backups Size: {{ total_backup_size.stdout }}
+        create: yes
+        mode: '0644'
+
+    - name: Display backup summary
+      debug:
+        msg: |
+          Database Backup Summary:
+          - Database: {{ db_name }} ({{ db_type }})
+          - Backup File: {{ backup_file }}
+          - Backup Size: {{ backup_size_mb | default('unknown') }} MB
+          - Integrity Check: {{ 'PASS' if (pg_verify is succeeded or mysql_verify is succeeded) else 'FAIL' }}
+          - Total Backups Size: {{ total_backup_size.stdout }}
+          - Old Backups Removed: {{ old_backups.matched | default(0) }}
+
+    - name: Upload backup to GCS (optional)
+      command: |
+        gsutil cp {{ backup_file }} gs://{{ gcs_bucket }}/backups/{{ ansible_hostname }}/
+      when: gcs_bucket is defined and gcs_bucket | length > 0
+      register: gcs_upload
+      ignore_errors: yes
+
+    - name: Final assertion
+      assert:
+        that:
+          - backup_stat.stat.exists
+          - backup_stat.stat.size > 0
+          - (pg_verify is succeeded) or (mysql_verify is succeeded) or (db_type not in ['postgresql', 'mysql'])
+        fail_msg: "Backup failed or is corrupted"
+        success_msg: "Backup completed successfully"

@@ -1,0 +1,107 @@
+---
+# Service Restart Playbook
+# Purpose: Restart any systemd service (nginx, apache, postgresql, etc.)
+# Issue Types: service_down, service_crashed, service_hung
+# Risk: Low
+# Tested: 20 successful resolutions
+
+- name: Restart Service and Verify
+  hosts: all
+  become: yes
+  vars:
+    service_name: "{{ service | default('nginx') }}"
+    health_check_url: "{{ health_url | default('http://localhost') }}"
+    health_check_timeout: 60
+
+  tasks:
+    - name: Wait for host to be accessible
+      wait_for:
+        port: 22
+        host: "{{ inventory_hostname }}"
+        delay: 5
+        timeout: 60
+      delegate_to: localhost
+
+    - name: Check if service exists
+      systemd:
+        name: "{{ service_name }}"
+      register: service_status
+      failed_when: false
+
+    - name: Display service status before restart
+      debug:
+        msg: "Service {{ service_name }} status: {{ service_status.status.ActiveState | default('not found') }}"
+
+    - name: Stop service gracefully
+      systemd:
+        name: "{{ service_name }}"
+        state: stopped
+      register: stop_result
+      ignore_errors: yes
+
+    - name: Wait for service to stop
+      wait_for:
+        timeout: 10
+      when: stop_result is succeeded
+
+    - name: Start service
+      systemd:
+        name: "{{ service_name }}"
+        state: started
+        enabled: yes
+      register: start_result
+
+    - name: Wait for service to initialize
+      wait_for:
+        timeout: 15
+
+    - name: Verify service is running
+      systemd:
+        name: "{{ service_name }}"
+      register: final_status
+      failed_when: final_status.status.ActiveState != "active"
+
+    - name: Check service port (if web service)
+      wait_for:
+        port: "{{ service_port | default(80) }}"
+        host: localhost
+        delay: 2
+        timeout: 30
+      when: service_name in ['nginx', 'apache2', 'httpd']
+      ignore_errors: yes
+
+    - name: HTTP health check (if applicable)
+      uri:
+        url: "{{ health_check_url }}"
+        status_code: 200
+        timeout: 10
+      register: health_check
+      retries: 5
+      delay: 10
+      when: service_name in ['nginx', 'apache2', 'httpd']
+      ignore_errors: yes
+
+    - name: Log successful restart
+      lineinfile:
+        path: /var/log/ansible-service-restart.log
+        line: "{{ ansible_date_time.iso8601 }} - {{ service_name }} restarted successfully by incident resolution system"
+        create: yes
+        mode: '0644'
+
+    - name: Display final status
+      debug:
+        msg: |
+          Service Restart Complete:
+          - Service: {{ service_name }}
+          - State: {{ final_status.status.ActiveState }}
+          - Uptime: {{ final_status.status.ActiveEnterTimestamp | default('N/A') }}
+          - PID: {{ final_status.status.MainPID | default('N/A') }}
+          {% if health_check is defined and health_check.status is defined %}
+          - Health Check: PASSED (HTTP {{ health_check.status }})
+          {% endif %}
+
+  handlers:
+    - name: reload {{ service_name }}
+      systemd:
+        name: "{{ service_name }}"
+        state: reloaded

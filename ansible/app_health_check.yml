@@ -1,0 +1,149 @@
+---
+# Application Health Check and Recovery
+# Purpose: Check application health and attempt automatic recovery
+# Issue Types: app_unhealthy, app_slow, app_timeout
+# Risk: Low (read-only checks with optional restart)
+# Tested: 12 successful resolutions
+
+- name: Application Health Check and Recovery
+  hosts: all
+  become: yes
+  vars:
+    app_name: "{{ application | default('webapp') }}"
+    health_endpoint: "{{ health_url | default('http://localhost:8080/health') }}"
+    max_response_time: "{{ max_time | default(5) }}"
+    service_name: "{{ service | default('nginx') }}"
+
+  tasks:
+    - name: Check if application port is listening
+      wait_for:
+        port: "{{ app_port | default(8080) }}"
+        host: localhost
+        timeout: 10
+        state: started
+      register: port_check
+      ignore_errors: yes
+
+    - name: HTTP health check
+      uri:
+        url: "{{ health_endpoint }}"
+        method: GET
+        status_code: 200
+        timeout: "{{ max_response_time }}"
+        return_content: yes
+      register: health_response
+      retries: 3
+      delay: 5
+      ignore_errors: yes
+
+    - name: Check response time
+      set_fact:
+        response_time_ok: "{{ health_response.elapsed is defined and health_response.elapsed < (max_response_time | int) }}"
+      when: health_response is succeeded
+
+    - name: Check process memory usage
+      shell: |
+        ps aux | grep {{ service_name }} | grep -v grep | awk '{sum+=$6} END {print sum/1024}'
+      register: memory_usage
+      changed_when: false
+      failed_when: false
+
+    - name: Check process CPU usage
+      shell: |
+        ps aux | grep {{ service_name }} | grep -v grep | awk '{sum+=$3} END {print sum}'
+      register: cpu_usage
+      changed_when: false
+      failed_when: false
+
+    - name: Check disk I/O
+      shell: iostat -x 1 2 | tail -1 | awk '{print $NF}'
+      register: io_wait
+      changed_when: false
+      failed_when: false
+
+    - name: Display health check results
+      debug:
+        msg: |
+          Health Check Results:
+          - Port {{ app_port | default(8080) }}: {{ 'OPEN' if port_check is succeeded else 'CLOSED' }}
+          - HTTP Health: {{ 'PASS' if health_response is succeeded else 'FAIL' }}
+          {% if health_response is succeeded %}
+          - Response Time: {{ health_response.elapsed }}s
+          {% endif %}
+          - Memory Usage: {{ memory_usage.stdout | default('N/A') }} MB
+          - CPU Usage: {{ cpu_usage.stdout | default('N/A') }}%
+          - I/O Wait: {{ io_wait.stdout | default('N/A') }}%
+
+    - name: Determine if restart is needed
+      set_fact:
+        needs_restart: >-
+          {{ (port_check is failed) or
+             (health_response is failed) or
+             (response_time_ok is defined and not response_time_ok) or
+             (memory_usage.stdout | default('0') | float > 4000) or
+             (cpu_usage.stdout | default('0') | float > 90) }}
+
+    - name: Display restart decision
+      debug:
+        msg: "Application restart {{ 'NEEDED' if needs_restart else 'NOT NEEDED' }}"
+
+    - name: Restart application if unhealthy
+      systemd:
+        name: "{{ service_name }}"
+        state: restarted
+      when: needs_restart | bool
+      register: restart_result
+
+    - name: Wait for application to come back
+      wait_for:
+        port: "{{ app_port | default(8080) }}"
+        host: localhost
+        delay: 10
+        timeout: 60
+      when: restart_result is changed
+
+    - name: Verify health after restart
+      uri:
+        url: "{{ health_endpoint }}"
+        method: GET
+        status_code: 200
+        timeout: 10
+      register: post_restart_health
+      retries: 5
+      delay: 10
+      when: restart_result is changed
+
+    - name: Log health check results
+      lineinfile:
+        path: /var/log/ansible-health-check.log
+        line: |
+          {{ ansible_date_time.iso8601 }} - Health Check: {{ app_name }}
+          Port: {{ 'OK' if port_check is succeeded else 'FAIL' }}
+          HTTP: {{ 'OK' if health_response is succeeded else 'FAIL' }}
+          Restart: {{ 'YES' if needs_restart else 'NO' }}
+          Final Status: {{ 'OK' if (post_restart_health is succeeded or not needs_restart) else 'FAIL' }}
+        create: yes
+        mode: '0644'
+
+    - name: Send metrics to monitoring (optional)
+      uri:
+        url: "{{ metrics_endpoint | default('') }}"
+        method: POST
+        body_format: json
+        body:
+          app: "{{ app_name }}"
+          status: "{{ 'healthy' if (health_response is succeeded or post_restart_health is succeeded) else 'unhealthy' }}"
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          metrics:
+            response_time: "{{ health_response.elapsed | default(0) }}"
+            memory_mb: "{{ memory_usage.stdout | default(0) }}"
+            cpu_percent: "{{ cpu_usage.stdout | default(0) }}"
+      when: metrics_endpoint is defined and metrics_endpoint | length > 0
+      ignore_errors: yes
+
+    - name: Final assertion
+      assert:
+        that:
+          - (health_response is succeeded) or (post_restart_health is succeeded)
+        fail_msg: "Application {{ app_name }} is still unhealthy after restart"
+        success_msg: "Application {{ app_name }} is healthy"

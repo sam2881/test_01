@@ -1,0 +1,144 @@
+---
+# Ansible playbook to restart Nginx service on GCP VM
+# Used by Infrastructure Agent for automated service recovery
+
+- name: Restart Nginx Service on GCP VM
+  hosts: target_vm
+  become: yes
+  gather_facts: yes
+
+  vars:
+    nginx_service_name: nginx
+    health_check_retries: 5
+    health_check_delay: 10
+
+  tasks:
+    - name: Display VM information
+      debug:
+        msg: "Restarting Nginx on {{ inventory_hostname }} ({{ ansible_default_ipv4.address }})"
+
+    - name: Check if Nginx is installed
+      command: which nginx
+      register: nginx_installed
+      failed_when: false
+      changed_when: false
+
+    - name: Install Nginx if not present (Ubuntu/Debian)
+      apt:
+        name: nginx
+        state: present
+        update_cache: yes
+      when:
+        - nginx_installed.rc != 0
+        - ansible_os_family == "Debian"
+
+    - name: Install Nginx if not present (RedHat/CentOS)
+      yum:
+        name: nginx
+        state: present
+      when:
+        - nginx_installed.rc != 0
+        - ansible_os_family == "RedHat"
+
+    - name: Check current Nginx status
+      systemd:
+        name: "{{ nginx_service_name }}"
+      register: nginx_status_before
+      failed_when: false
+
+    - name: Display current Nginx status
+      debug:
+        msg: "Nginx current state: {{ nginx_status_before.status.ActiveState | default('unknown') }}"
+
+    - name: Stop Nginx service
+      systemd:
+        name: "{{ nginx_service_name }}"
+        state: stopped
+      register: nginx_stopped
+      failed_when: false
+
+    - name: Wait for Nginx to stop
+      wait_for:
+        port: 80
+        state: stopped
+        timeout: 30
+      ignore_errors: yes
+
+    - name: Start Nginx service
+      systemd:
+        name: "{{ nginx_service_name }}"
+        state: started
+        enabled: yes
+      register: nginx_started
+
+    - name: Wait for Nginx to be ready
+      wait_for:
+        port: 80
+        delay: 2
+        timeout: 30
+        state: started
+      register: nginx_ready
+      retries: "{{ health_check_retries }}"
+      delay: "{{ health_check_delay }}"
+
+    - name: Verify Nginx is running
+      systemd:
+        name: "{{ nginx_service_name }}"
+      register: nginx_status_after
+
+    - name: Check Nginx process
+      command: pgrep nginx
+      register: nginx_process
+      changed_when: false
+      failed_when: nginx_process.rc != 0
+
+    - name: Test Nginx configuration
+      command: nginx -t
+      register: nginx_config_test
+      changed_when: false
+
+    - name: Perform HTTP health check
+      uri:
+        url: "http://{{ ansible_default_ipv4.address }}"
+        status_code: 200
+        timeout: 10
+      register: http_check
+      retries: 3
+      delay: 5
+      until: http_check.status == 200
+
+    - name: Display Nginx restart results
+      debug:
+        msg:
+          - "Nginx restart: SUCCESS"
+          - "Service state: {{ nginx_status_after.status.ActiveState }}"
+          - "Process count: {{ nginx_process.stdout_lines | length }}"
+          - "Config test: {{ 'PASSED' if nginx_config_test.rc == 0 else 'FAILED' }}"
+          - "HTTP check: {{ 'OK' if http_check.status == 200 else 'FAILED' }}"
+
+    - name: Get Nginx access log tail
+      command: tail -n 20 /var/log/nginx/access.log
+      register: nginx_access_log
+      changed_when: false
+      failed_when: false
+
+    - name: Get Nginx error log tail
+      command: tail -n 20 /var/log/nginx/error.log
+      register: nginx_error_log
+      changed_when: false
+      failed_when: false
+
+    - name: Create restart report
+      set_fact:
+        restart_report:
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          vm_name: "{{ inventory_hostname }}"
+          vm_ip: "{{ ansible_default_ipv4.address }}"
+          nginx_version: "{{ ansible_local.nginx.version | default('unknown') }}"
+          restart_status: "success"
+          service_state: "{{ nginx_status_after.status.ActiveState }}"
+          http_status: "{{ http_check.status }}"
+
+    - name: Display final report
+      debug:
+        var: restart_report

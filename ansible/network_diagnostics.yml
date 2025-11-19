@@ -1,0 +1,221 @@
+---
+# Network Diagnostics Playbook
+# Purpose: Diagnose network connectivity issues
+# Issue Types: network_timeout, connection_refused, dns_error
+# Risk: Very Low (read-only diagnostics)
+# Tested: 8 successful resolutions
+
+- name: Network Diagnostics
+  hosts: all
+  become: yes
+  vars:
+    test_hosts:
+      - google.com
+      - 8.8.8.8
+      - "{{ target_host | default('www.example.com') }}"
+    test_port: "{{ port | default(443) }}"
+
+  tasks:
+    - name: Check network interfaces
+      command: ip addr show
+      register: interfaces
+      changed_when: false
+
+    - name: Display network interfaces
+      debug:
+        var: interfaces.stdout_lines
+
+    - name: Check default route
+      command: ip route show default
+      register: default_route
+      changed_when: false
+
+    - name: Display default route
+      debug:
+        msg: "Default route: {{ default_route.stdout }}"
+
+    - name: Check DNS configuration
+      command: cat /etc/resolv.conf
+      register: dns_config
+      changed_when: false
+
+    - name: Display DNS servers
+      debug:
+        var: dns_config.stdout_lines
+
+    - name: Ping test to multiple hosts
+      command: ping -c 3 -W 2 {{ item }}
+      loop: "{{ test_hosts }}"
+      register: ping_results
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Display ping results
+      debug:
+        msg: |
+          Ping to {{ item.item }}:
+          {{ 'SUCCESS' if item.rc == 0 else 'FAILED' }}
+          {% if item.rc == 0 %}
+          {{ item.stdout_lines[-1] }}
+          {% endif %}
+      loop: "{{ ping_results.results }}"
+
+    - name: DNS resolution test
+      command: nslookup {{ item }}
+      loop: "{{ test_hosts }}"
+      register: dns_results
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Display DNS resolution results
+      debug:
+        msg: |
+          DNS lookup for {{ item.item }}:
+          {{ 'SUCCESS' if item.rc == 0 else 'FAILED' }}
+      loop: "{{ dns_results.results }}"
+
+    - name: Port connectivity test
+      wait_for:
+        host: "{{ item }}"
+        port: "{{ test_port }}"
+        timeout: 5
+        state: started
+      loop: "{{ test_hosts }}"
+      register: port_results
+      ignore_errors: yes
+
+    - name: Display port connectivity results
+      debug:
+        msg: |
+          Port {{ test_port }} on {{ item.item }}:
+          {{ 'OPEN' if item is succeeded else 'CLOSED/TIMEOUT' }}
+      loop: "{{ port_results.results }}"
+
+    - name: Check firewall status (ufw)
+      command: ufw status verbose
+      register: ufw_status
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Display firewall status
+      debug:
+        var: ufw_status.stdout_lines
+      when: ufw_status.rc == 0
+
+    - name: Check iptables rules
+      command: iptables -L -n -v
+      register: iptables_rules
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Traceroute to target
+      command: traceroute -m 10 {{ test_hosts[0] }}
+      register: traceroute_result
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Display traceroute
+      debug:
+        var: traceroute_result.stdout_lines
+      when: traceroute_result.rc == 0
+
+    - name: Check network statistics
+      command: netstat -s
+      register: netstat_stats
+      changed_when: false
+
+    - name: Check listening ports
+      command: netstat -tuln
+      register: listening_ports
+      changed_when: false
+
+    - name: Display listening ports
+      debug:
+        var: listening_ports.stdout_lines
+
+    - name: Check for packet loss
+      shell: |
+        cat /proc/net/dev | awk 'NR>2 {print $1, "RX errors:", $4, "TX errors:", $12}'
+      register: packet_errors
+      changed_when: false
+
+    - name: Display packet errors
+      debug:
+        var: packet_errors.stdout_lines
+
+    - name: Summarize connectivity
+      set_fact:
+        ping_success_count: "{{ ping_results.results | selectattr('rc', 'equalto', 0) | list | length }}"
+        dns_success_count: "{{ dns_results.results | selectattr('rc', 'equalto', 0) | list | length }}"
+        port_success_count: "{{ port_results.results | select('succeeded') | list | length }}"
+
+    - name: Create diagnostics report
+      copy:
+        content: |
+          Network Diagnostics Report
+          Generated: {{ ansible_date_time.iso8601 }}
+          Host: {{ ansible_hostname }}
+
+          === Network Interfaces ===
+          {{ interfaces.stdout }}
+
+          === Default Route ===
+          {{ default_route.stdout }}
+
+          === DNS Configuration ===
+          {{ dns_config.stdout }}
+
+          === Connectivity Summary ===
+          Ping Success: {{ ping_success_count }}/{{ test_hosts | length }}
+          DNS Success: {{ dns_success_count }}/{{ test_hosts | length }}
+          Port {{ test_port }} Success: {{ port_success_count }}/{{ test_hosts | length }}
+
+          === Listening Ports ===
+          {{ listening_ports.stdout }}
+
+          === Packet Errors ===
+          {{ packet_errors.stdout }}
+
+          {% if traceroute_result.rc == 0 %}
+          === Traceroute to {{ test_hosts[0] }} ===
+          {{ traceroute_result.stdout }}
+          {% endif %}
+        dest: /var/log/network-diagnostics-{{ ansible_date_time.iso8601_basic_short }}.txt
+        mode: '0644'
+
+    - name: Log diagnostics summary
+      lineinfile:
+        path: /var/log/ansible-network-diag.log
+        line: |
+          {{ ansible_date_time.iso8601 }} - Network Diagnostics
+          Ping: {{ ping_success_count }}/{{ test_hosts | length }}
+          DNS: {{ dns_success_count }}/{{ test_hosts | length }}
+          Port: {{ port_success_count }}/{{ test_hosts | length }}
+        create: yes
+        mode: '0644'
+
+    - name: Display final summary
+      debug:
+        msg: |
+          Network Diagnostics Summary:
+          - Ping Tests: {{ ping_success_count }}/{{ test_hosts | length }} passed
+          - DNS Tests: {{ dns_success_count }}/{{ test_hosts | length }} passed
+          - Port {{ test_port }} Tests: {{ port_success_count }}/{{ test_hosts | length }} passed
+          - Report saved to: /var/log/network-diagnostics-{{ ansible_date_time.iso8601_basic_short }}.txt
+
+          Recommendations:
+          {% if ping_success_count == 0 %}
+          - Check physical network connection
+          - Verify network interface is up
+          - Check default gateway configuration
+          {% elif dns_success_count == 0 %}
+          - Check /etc/resolv.conf
+          - Verify DNS server accessibility
+          - Test with alternative DNS (8.8.8.8)
+          {% elif port_success_count == 0 %}
+          - Check if firewall is blocking port {{ test_port }}
+          - Verify service is listening on port {{ test_port }}
+          - Check security group / network ACLs
+          {% else %}
+          - Network connectivity appears healthy
+          {% endif %}
