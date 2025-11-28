@@ -186,9 +186,9 @@ jobs:
       - name: Update ServiceNow Incident
         if: always()
         env:
-          SNOW_INSTANCE: ${{ secrets.SNOW_INSTANCE_URL }}
-          SNOW_USER: ${{ secrets.SNOW_USERNAME }}
-          SNOW_PASS: ${{ secrets.SNOW_PASSWORD }}
+          SNOW_INSTANCE: ${{ secrets.SNOWINSTANCEURL }}
+          SNOW_USER: ${{ secrets.SNOWUSERNAME }}
+          SNOW_PASS: ${{ secrets.SNOWPASSWORD }}
         run: |
           python3 << 'EOF'
           import os

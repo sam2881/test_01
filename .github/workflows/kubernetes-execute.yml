@@ -53,9 +53,9 @@ permissions:
   id-token: write
 
 env:
-  SNOW_INSTANCE_URL: ${{ secrets.SNOW_INSTANCE_URL }}
-  SNOW_USERNAME: ${{ secrets.SNOW_USERNAME }}
-  SNOW_PASSWORD: ${{ secrets.SNOW_PASSWORD }}
+  SNOW_INSTANCE_URL: ${{ secrets.SNOWINSTANCEURL }}
+  SNOW_USERNAME: ${{ secrets.SNOWUSERNAME }}
+  SNOW_PASSWORD: ${{ secrets.SNOWPASSWORD }}
 
 jobs:
   validate:
@@ -125,7 +125,7 @@ jobs:
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+          credentials_json: ${{ secrets.GCPSERVICEACCOUNTKEY }}
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
@@ -136,8 +136,8 @@ jobs:
       - name: Configure kubectl
         run: |
           # Get GKE credentials
-          CLUSTER_NAME="${{ secrets.GKE_CLUSTER_NAME }}"
-          CLUSTER_ZONE="${{ secrets.GKE_CLUSTER_ZONE }}"
+          CLUSTER_NAME="${{ secrets.GKECLUSTERNAME }}"
+          CLUSTER_ZONE="${{ secrets.GKECLUSTERZONE }}"
 
           if [ -n "$CLUSTER_NAME" ] && [ -n "$CLUSTER_ZONE" ]; then
             gcloud container clusters get-credentials "$CLUSTER_NAME" --zone "$CLUSTER_ZONE"
