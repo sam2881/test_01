@@ -1,0 +1,201 @@
+name: Ansible Playbook Execution
+
+on:
+  workflow_dispatch:
+    inputs:
+      playbook_name:
+        description: 'Ansible playbook to execute'
+        required: true
+        type: string
+      inventory:
+        description: 'Target inventory (e.g., production, staging)'
+        required: true
+        type: choice
+        options:
+          - production
+          - staging
+          - development
+      extra_vars:
+        description: 'Extra variables as JSON (e.g., {"target_host": "web-01"})'
+        required: false
+        type: string
+        default: '{}'
+      dry_run:
+        description: 'Run in check mode (dry-run)'
+        required: true
+        type: boolean
+        default: true
+      incident_id:
+        description: 'ServiceNow Incident ID'
+        required: true
+        type: string
+      approval_id:
+        description: 'HITL Approval ID'
+        required: false
+        type: string
+
+env:
+  ANSIBLE_HOST_KEY_CHECKING: false
+  ANSIBLE_FORCE_COLOR: true
+
+jobs:
+  lint:
+    name: Lint Playbook
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ansible-lint
+        run: pip install ansible-lint
+
+      - name: Run ansible-lint
+        run: |
+          ansible-lint ansible/${{ inputs.playbook_name }} || echo "Lint warnings found"
+
+  validate:
+    name: Validate & Dry Run
+    needs: lint
+    runs-on: ubuntu-latest
+    outputs:
+      validation_status: ${{ steps.validate.outputs.status }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Ansible
+        run: |
+          pip install ansible
+          pip install google-auth requests
+
+      - name: Configure GCP Credentials
+        if: ${{ inputs.inventory != 'development' }}
+        run: |
+          echo '${{ secrets.GCP_SA_KEY }}' > /tmp/gcp-key.json
+          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json
+
+      - name: Validate Playbook Syntax
+        id: validate
+        run: |
+          ansible-playbook ansible/${{ inputs.playbook_name }} --syntax-check
+          echo "status=valid" >> $GITHUB_OUTPUT
+
+      - name: Dry Run (Check Mode)
+        if: ${{ inputs.dry_run == true }}
+        run: |
+          echo "Running dry-run for playbook: ${{ inputs.playbook_name }}"
+          echo "Inventory: ${{ inputs.inventory }}"
+          echo "Extra vars: ${{ inputs.extra_vars }}"
+          ansible-playbook ansible/${{ inputs.playbook_name }} \
+            -i ansible/inventories/${{ inputs.inventory }}.yml \
+            --check \
+            --diff \
+            -e '${{ inputs.extra_vars }}'
+        continue-on-error: true
+
+  execute:
+    name: Execute Playbook
+    needs: validate
+    if: ${{ inputs.dry_run == false }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.inventory }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Ansible
+        run: |
+          pip install ansible
+          pip install google-auth requests pysnow
+
+      - name: Configure GCP Credentials
+        run: |
+          echo '${{ secrets.GCP_SA_KEY }}' > /tmp/gcp-key.json
+          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json
+
+      - name: Configure SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo '${{ secrets.ANSIBLE_SSH_KEY }}' > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+      - name: Execute Playbook
+        id: execute
+        run: |
+          echo "=========================================="
+          echo "EXECUTING ANSIBLE PLAYBOOK"
+          echo "=========================================="
+          echo "Playbook: ${{ inputs.playbook_name }}"
+          echo "Inventory: ${{ inputs.inventory }}"
+          echo "Incident: ${{ inputs.incident_id }}"
+          echo "=========================================="
+
+          ansible-playbook ansible/${{ inputs.playbook_name }} \
+            -i ansible/inventories/${{ inputs.inventory }}.yml \
+            -e '${{ inputs.extra_vars }}' \
+            -e 'incident_id=${{ inputs.incident_id }}' \
+            -v
+
+      - name: Update ServiceNow Incident
+        if: always()
+        env:
+          SNOW_INSTANCE: ${{ secrets.SNOW_INSTANCE_URL }}
+          SNOW_USER: ${{ secrets.SNOW_USERNAME }}
+          SNOW_PASS: ${{ secrets.SNOW_PASSWORD }}
+        run: |
+          python3 << 'EOF'
+          import os
+          import requests
+          from requests.auth import HTTPBasicAuth
+
+          instance = os.environ.get('SNOW_INSTANCE')
+          user = os.environ.get('SNOW_USER')
+          password = os.environ.get('SNOW_PASS')
+          incident_id = '${{ inputs.incident_id }}'
+          status = '${{ job.status }}'
+
+          if instance and user and password:
+              url = f"{instance}/api/now/table/incident"
+              params = {'sysparm_query': f'number={incident_id}', 'sysparm_limit': 1}
+
+              resp = requests.get(url, auth=HTTPBasicAuth(user, password), params=params)
+              if resp.ok and resp.json().get('result'):
+                  sys_id = resp.json()['result'][0]['sys_id']
+
+                  work_note = f"GitHub Actions Execution Complete\n"
+                  work_note += f"Playbook: ${{ inputs.playbook_name }}\n"
+                  work_note += f"Status: {status}\n"
+                  work_note += f"Run ID: ${{ github.run_id }}"
+
+                  update_url = f"{instance}/api/now/table/incident/{sys_id}"
+                  requests.patch(update_url, auth=HTTPBasicAuth(user, password),
+                               json={'work_notes': work_note})
+                  print(f"Updated incident {incident_id}")
+          EOF
+
+      - name: Post Execution Summary
+        if: always()
+        run: |
+          echo "## Ansible Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Playbook | ${{ inputs.playbook_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Inventory | ${{ inputs.inventory }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Incident | ${{ inputs.incident_id }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | ${{ job.status }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Run ID | ${{ github.run_id }} |" >> $GITHUB_STEP_SUMMARY

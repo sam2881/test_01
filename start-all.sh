@@ -29,7 +29,7 @@ echo ""
 #############################################
 # Environment Variables
 #############################################
-echo -e "${YELLOW}[1/6] Setting environment variables...${NC}"
+echo -e "${YELLOW}[1/7] Setting environment variables...${NC}"
 
 export KAFKA_BOOTSTRAP_SERVERS=localhost:29092
 export SNOW_INSTANCE_URL="https://dev275804.service-now.com"
@@ -46,14 +46,16 @@ echo -e "${GREEN}   Environment variables set${NC}"
 #############################################
 # Kill existing processes
 #############################################
-echo -e "${YELLOW}[2/6] Stopping any existing processes...${NC}"
+echo -e "${YELLOW}[2/7] Stopping any existing processes...${NC}"
 
 # Kill existing Python processes for our app
 pkill -f "python3 orchestrator/main.py" 2>/dev/null || true
 pkill -f "python3 streaming/incident_consumer.py" 2>/dev/null || true
+pkill -f "python3 mcp_gateway/http_server.py" 2>/dev/null || true
 
 # Kill existing frontend on port 3002
 fuser -k 3002/tcp 2>/dev/null || true
+fuser -k 8001/tcp 2>/dev/null || true
 
 sleep 2
 echo -e "${GREEN}   Existing processes stopped${NC}"
@@ -61,7 +63,7 @@ echo -e "${GREEN}   Existing processes stopped${NC}"
 #############################################
 # Start Docker Infrastructure
 #############################################
-echo -e "${YELLOW}[3/6] Starting Docker infrastructure...${NC}"
+echo -e "${YELLOW}[3/7] Starting Docker infrastructure...${NC}"
 
 cd "$PROJECT_ROOT/deployment"
 
@@ -93,7 +95,7 @@ done
 #############################################
 # Start Backend API
 #############################################
-echo -e "${YELLOW}[4/6] Starting Backend API server...${NC}"
+echo -e "${YELLOW}[4/7] Starting Backend API server...${NC}"
 
 cd "$PROJECT_ROOT/backend"
 
@@ -118,7 +120,7 @@ done
 #############################################
 # Start Kafka Consumer
 #############################################
-echo -e "${YELLOW}[5/6] Starting Kafka Consumer...${NC}"
+echo -e "${YELLOW}[5/7] Starting Kafka Consumer...${NC}"
 
 cd "$PROJECT_ROOT/backend"
 
@@ -135,9 +137,33 @@ else
 fi
 
 #############################################
+# Start MCP HTTP Gateway
+#############################################
+echo -e "${YELLOW}[6/7] Starting MCP HTTP Gateway...${NC}"
+
+cd "$PROJECT_ROOT/backend"
+
+# Start MCP Gateway in background
+nohup python3 mcp_gateway/http_server.py > "$LOG_DIR/mcp_gateway.log" 2>&1 &
+MCP_PID=$!
+echo $MCP_PID > "$LOG_DIR/mcp_gateway.pid"
+
+# Wait for MCP Gateway to be ready
+for i in {1..15}; do
+    if curl -s http://localhost:8001/health &>/dev/null; then
+        echo -e "${GREEN}   MCP Gateway started (PID: $MCP_PID)${NC}"
+        break
+    fi
+    if [ $i -eq 15 ]; then
+        echo -e "${YELLOW}   MCP Gateway still starting... Check $LOG_DIR/mcp_gateway.log${NC}"
+    fi
+    sleep 1
+done
+
+#############################################
 # Start Frontend
 #############################################
-echo -e "${YELLOW}[6/6] Starting Frontend...${NC}"
+echo -e "${YELLOW}[7/7] Starting Frontend...${NC}"
 
 cd "$PROJECT_ROOT/frontend"
 
@@ -169,20 +195,30 @@ echo ""
 echo -e "${BLUE}Service URLs:${NC}"
 echo -e "  Frontend Dashboard:  ${GREEN}http://localhost:3002${NC}"
 echo -e "  Backend API:         ${GREEN}http://localhost:8000${NC}"
+echo -e "  MCP Gateway:         ${GREEN}http://localhost:8001${NC}"
 echo -e "  API Documentation:   ${GREEN}http://localhost:8000/docs${NC}"
+echo -e "  MCP API Docs:        ${GREEN}http://localhost:8001/docs${NC}"
 echo -e "  Kafka UI:            ${GREEN}http://localhost:8085${NC}"
 echo -e "  Grafana:             ${GREEN}http://localhost:3000${NC}"
 echo -e "  Neo4j Browser:       ${GREEN}http://localhost:7474${NC}"
 echo ""
+echo -e "${BLUE}MCP Servers (via HTTP Gateway):${NC}"
+echo -e "  ServiceNow MCP:      ${GREEN}http://localhost:8001/api/mcp/servicenow${NC}"
+echo -e "  GCP MCP:             ${GREEN}http://localhost:8001/api/mcp/gcp${NC}"
+echo -e "  GitHub MCP:          ${GREEN}http://localhost:8001/api/mcp/github${NC}"
+echo -e "  Jira MCP:            ${GREEN}http://localhost:8001/api/mcp/jira${NC}"
+echo ""
 echo -e "${BLUE}Log Files:${NC}"
-echo -e "  Backend:   $LOG_DIR/backend.log"
-echo -e "  Consumer:  $LOG_DIR/consumer.log"
-echo -e "  Frontend:  $LOG_DIR/frontend.log"
+echo -e "  Backend:     $LOG_DIR/backend.log"
+echo -e "  Consumer:    $LOG_DIR/consumer.log"
+echo -e "  MCP Gateway: $LOG_DIR/mcp_gateway.log"
+echo -e "  Frontend:    $LOG_DIR/frontend.log"
 echo ""
 echo -e "${BLUE}Process IDs:${NC}"
-echo -e "  Backend:   $(cat $LOG_DIR/backend.pid 2>/dev/null || echo 'N/A')"
-echo -e "  Consumer:  $(cat $LOG_DIR/consumer.pid 2>/dev/null || echo 'N/A')"
-echo -e "  Frontend:  $(cat $LOG_DIR/frontend.pid 2>/dev/null || echo 'N/A')"
+echo -e "  Backend:     $(cat $LOG_DIR/backend.pid 2>/dev/null || echo 'N/A')"
+echo -e "  Consumer:    $(cat $LOG_DIR/consumer.pid 2>/dev/null || echo 'N/A')"
+echo -e "  MCP Gateway: $(cat $LOG_DIR/mcp_gateway.pid 2>/dev/null || echo 'N/A')"
+echo -e "  Frontend:    $(cat $LOG_DIR/frontend.pid 2>/dev/null || echo 'N/A')"
 echo ""
 echo -e "${YELLOW}To stop all services, run: ./stop-all.sh${NC}"
 echo ""

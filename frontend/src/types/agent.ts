@@ -41,6 +41,11 @@ export const AGENT_NAMES = {
   DATA: 'data',
   GCP_MONITOR: 'gcp_monitor',
   DSPY_OPTIMIZER: 'dspy_optimizer',
+  // MCP Servers
+  SERVICENOW_MCP: 'servicenow-mcp',
+  GCP_MCP: 'gcp-mcp',
+  GITHUB_MCP: 'github-mcp',
+  JIRA_MCP: 'jira-mcp',
 } as const
 
 export const AGENT_DISPLAY_NAMES: Record<string, string> = {
@@ -51,4 +56,9 @@ export const AGENT_DISPLAY_NAMES: Record<string, string> = {
   data: 'Data Agent',
   gcp_monitor: 'GCP Monitor Agent',
   dspy_optimizer: 'DSPy Optimizer',
+  // MCP Servers
+  'servicenow-mcp': '🎫 ServiceNow MCP',
+  'gcp-mcp': '☁️ GCP MCP',
+  'github-mcp': '🐙 GitHub MCP',
+  'jira-mcp': '📋 Jira MCP',
 }

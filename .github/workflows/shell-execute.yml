@@ -1,0 +1,224 @@
+name: Shell Script Execution
+
+on:
+  workflow_dispatch:
+    inputs:
+      script_path:
+        description: 'Path to shell script'
+        required: true
+        type: string
+      script_args:
+        description: 'Script arguments as JSON'
+        required: false
+        type: string
+        default: '{}'
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+      incident_id:
+        description: 'ServiceNow incident ID'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run mode (validate only)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  SNOW_INSTANCE_URL: ${{ secrets.SNOW_INSTANCE_URL }}
+  SNOW_USERNAME: ${{ secrets.SNOW_USERNAME }}
+  SNOW_PASSWORD: ${{ secrets.SNOW_PASSWORD }}
+
+jobs:
+  validate:
+    name: Validate Script
+    runs-on: ubuntu-latest
+    outputs:
+      script_exists: ${{ steps.check.outputs.exists }}
+      script_safe: ${{ steps.security.outputs.safe }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check script exists
+        id: check
+        run: |
+          if [ -f "${{ inputs.script_path }}" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "✅ Script found: ${{ inputs.script_path }}"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "❌ Script not found: ${{ inputs.script_path }}"
+            exit 1
+          fi
+
+      - name: Security scan
+        id: security
+        run: |
+          SCRIPT_PATH="${{ inputs.script_path }}"
+
+          # Check for dangerous patterns
+          DANGEROUS_PATTERNS=(
+            "rm -rf /"
+            "rm -rf /*"
+            "dd if=/dev/zero"
+            ":(){ :|:& };:"
+            "mkfs."
+            "> /dev/sd"
+            "chmod 777 /"
+          )
+
+          SAFE=true
+          for pattern in "${DANGEROUS_PATTERNS[@]}"; do
+            if grep -q "$pattern" "$SCRIPT_PATH" 2>/dev/null; then
+              echo "❌ DANGEROUS: Found pattern '$pattern' in script"
+              SAFE=false
+            fi
+          done
+
+          echo "safe=$SAFE" >> $GITHUB_OUTPUT
+
+          if [ "$SAFE" = "false" ]; then
+            echo "::error::Script contains dangerous patterns"
+            exit 1
+          fi
+
+          echo "✅ Security scan passed"
+
+      - name: Shellcheck lint
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          shellcheck "${{ inputs.script_path }}" || echo "::warning::Shellcheck found issues"
+
+  execute:
+    name: Execute Script
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.script_exists == 'true' && needs.validate.outputs.script_safe == 'true'
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Parse script arguments
+        id: args
+        run: |
+          ARGS='${{ inputs.script_args }}'
+
+          # Convert JSON to environment variables
+          echo "$ARGS" | jq -r 'to_entries | .[] | "SCRIPT_\(.key | ascii_upcase)=\(.value)"' >> $GITHUB_ENV
+
+          # Also create a flat args string
+          FLAT_ARGS=$(echo "$ARGS" | jq -r 'to_entries | map("\(.key)=\(.value)") | join(" ")')
+          echo "flat_args=$FLAT_ARGS" >> $GITHUB_OUTPUT
+
+      - name: Execute script (dry-run)
+        if: inputs.dry_run == true
+        run: |
+          echo "🔍 DRY RUN MODE - Script would be executed with:"
+          echo "   Script: ${{ inputs.script_path }}"
+          echo "   Args: ${{ steps.args.outputs.flat_args }}"
+          echo "   Environment: ${{ inputs.environment }}"
+          echo ""
+          echo "Script content preview:"
+          head -50 "${{ inputs.script_path }}"
+          echo ""
+          echo "✅ Dry run validation complete"
+
+      - name: Execute script
+        id: execute
+        if: inputs.dry_run == false
+        run: |
+          SCRIPT_PATH="${{ inputs.script_path }}"
+
+          echo "🚀 Executing script: $SCRIPT_PATH"
+          echo "Environment: ${{ inputs.environment }}"
+          echo "Arguments: ${{ steps.args.outputs.flat_args }}"
+          echo "---"
+
+          # Make script executable
+          chmod +x "$SCRIPT_PATH"
+
+          # Execute with timeout
+          timeout 300 bash "$SCRIPT_PATH" ${{ steps.args.outputs.flat_args }} 2>&1 | tee execution.log
+          EXIT_CODE=$?
+
+          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "✅ Script completed successfully"
+          else
+            echo "❌ Script failed with exit code: $EXIT_CODE"
+            exit $EXIT_CODE
+          fi
+
+      - name: Upload execution log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: execution-log-${{ inputs.incident_id }}
+          path: execution.log
+          retention-days: 30
+
+      - name: Update ServiceNow incident
+        if: always() && inputs.dry_run == false
+        run: |
+          EXIT_CODE="${{ steps.execute.outputs.exit_code }}"
+
+          if [ -z "$EXIT_CODE" ]; then
+            EXIT_CODE="N/A (dry run)"
+          fi
+
+          if [ "$EXIT_CODE" = "0" ]; then
+            STATUS="Resolved"
+            NOTES="Shell script executed successfully via GitHub Actions.\n\nScript: ${{ inputs.script_path }}\nEnvironment: ${{ inputs.environment }}\nWorkflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          else
+            STATUS="In Progress"
+            NOTES="Shell script execution failed.\n\nScript: ${{ inputs.script_path }}\nExit Code: $EXIT_CODE\nWorkflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\n\nPlease review the execution logs."
+          fi
+
+          # Update ServiceNow
+          curl -X PATCH \
+            -H "Content-Type: application/json" \
+            -u "${{ env.SNOW_USERNAME }}:${{ env.SNOW_PASSWORD }}" \
+            -d "{\"state\": \"$([ \"$STATUS\" = \"Resolved\" ] && echo \"6\" || echo \"2\")\", \"work_notes\": \"$NOTES\"}" \
+            "${{ env.SNOW_INSTANCE_URL }}/api/now/table/incident/${{ inputs.incident_id }}" || true
+
+  notify:
+    name: Notify on Completion
+    runs-on: ubuntu-latest
+    needs: execute
+    if: always()
+
+    steps:
+      - name: Execution summary
+        run: |
+          echo "## Shell Script Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Script | ${{ inputs.script_path }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Incident ID | ${{ inputs.incident_id }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dry Run | ${{ inputs.dry_run }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | ${{ needs.execute.result }} |" >> $GITHUB_STEP_SUMMARY

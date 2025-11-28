@@ -1,0 +1,315 @@
+name: Kubernetes Execution
+
+on:
+  workflow_dispatch:
+    inputs:
+      manifest:
+        description: 'Path to Kubernetes manifest or action'
+        required: true
+        type: string
+      namespace:
+        description: 'Kubernetes namespace'
+        required: true
+        type: string
+        default: 'default'
+      action:
+        description: 'Action to perform'
+        required: true
+        type: choice
+        options:
+          - apply
+          - delete
+          - restart
+          - scale
+          - rollback
+      deployment_name:
+        description: 'Deployment name (for restart/scale/rollback)'
+        required: false
+        type: string
+      replicas:
+        description: 'Number of replicas (for scale action)'
+        required: false
+        type: string
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+      incident_id:
+        description: 'ServiceNow incident ID'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run mode (validate only)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  SNOW_INSTANCE_URL: ${{ secrets.SNOW_INSTANCE_URL }}
+  SNOW_USERNAME: ${{ secrets.SNOW_USERNAME }}
+  SNOW_PASSWORD: ${{ secrets.SNOW_PASSWORD }}
+
+jobs:
+  validate:
+    name: Validate Kubernetes Action
+    runs-on: ubuntu-latest
+    outputs:
+      valid: ${{ steps.validate.outputs.valid }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate inputs
+        id: validate
+        run: |
+          VALID=true
+
+          # Validate action-specific requirements
+          case "${{ inputs.action }}" in
+            apply|delete)
+              if [ ! -f "${{ inputs.manifest }}" ]; then
+                echo "❌ Manifest file not found: ${{ inputs.manifest }}"
+                VALID=false
+              fi
+              ;;
+            restart|scale|rollback)
+              if [ -z "${{ inputs.deployment_name }}" ]; then
+                echo "❌ Deployment name required for ${{ inputs.action }} action"
+                VALID=false
+              fi
+              ;;
+            scale)
+              if [ -z "${{ inputs.replicas }}" ]; then
+                echo "❌ Replicas count required for scale action"
+                VALID=false
+              fi
+              ;;
+          esac
+
+          echo "valid=$VALID" >> $GITHUB_OUTPUT
+
+          if [ "$VALID" = "false" ]; then
+            exit 1
+          fi
+
+      - name: Validate manifest syntax
+        if: inputs.action == 'apply' || inputs.action == 'delete'
+        run: |
+          # Install kubeval for manifest validation
+          wget -q https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz
+          tar xf kubeval-linux-amd64.tar.gz
+          chmod +x kubeval
+
+          ./kubeval "${{ inputs.manifest }}" || echo "::warning::Manifest validation had issues"
+
+  execute:
+    name: Execute Kubernetes Action
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.valid == 'true'
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubectl
+        run: |
+          # Get GKE credentials
+          CLUSTER_NAME="${{ secrets.GKE_CLUSTER_NAME }}"
+          CLUSTER_ZONE="${{ secrets.GKE_CLUSTER_ZONE }}"
+
+          if [ -n "$CLUSTER_NAME" ] && [ -n "$CLUSTER_ZONE" ]; then
+            gcloud container clusters get-credentials "$CLUSTER_NAME" --zone "$CLUSTER_ZONE"
+          else
+            echo "::warning::GKE cluster not configured, using existing kubeconfig"
+          fi
+
+      - name: Pre-execution state capture
+        id: pre_state
+        run: |
+          echo "📊 Capturing pre-execution state..."
+
+          # Capture current deployment state
+          if [ -n "${{ inputs.deployment_name }}" ]; then
+            kubectl get deployment "${{ inputs.deployment_name }}" -n "${{ inputs.namespace }}" -o yaml > pre-state.yaml 2>/dev/null || true
+            kubectl get pods -n "${{ inputs.namespace }}" -l app="${{ inputs.deployment_name }}" -o wide > pre-pods.txt 2>/dev/null || true
+          fi
+
+          # Capture namespace state
+          kubectl get all -n "${{ inputs.namespace }}" > pre-namespace.txt 2>/dev/null || true
+
+      - name: Execute action (dry-run)
+        if: inputs.dry_run == true
+        run: |
+          echo "🔍 DRY RUN MODE"
+          echo ""
+
+          case "${{ inputs.action }}" in
+            apply)
+              echo "Would apply manifest: ${{ inputs.manifest }}"
+              kubectl apply -f "${{ inputs.manifest }}" -n "${{ inputs.namespace }}" --dry-run=client -o yaml
+              ;;
+            delete)
+              echo "Would delete resources from: ${{ inputs.manifest }}"
+              kubectl delete -f "${{ inputs.manifest }}" -n "${{ inputs.namespace }}" --dry-run=client
+              ;;
+            restart)
+              echo "Would restart deployment: ${{ inputs.deployment_name }}"
+              kubectl rollout restart deployment "${{ inputs.deployment_name }}" -n "${{ inputs.namespace }}" --dry-run=client
+              ;;
+            scale)
+              echo "Would scale deployment ${{ inputs.deployment_name }} to ${{ inputs.replicas }} replicas"
+              kubectl scale deployment "${{ inputs.deployment_name }}" -n "${{ inputs.namespace }}" --replicas=${{ inputs.replicas }} --dry-run=client
+              ;;
+            rollback)
+              echo "Would rollback deployment: ${{ inputs.deployment_name }}"
+              kubectl rollout undo deployment "${{ inputs.deployment_name }}" -n "${{ inputs.namespace }}" --dry-run=client
+              ;;
+          esac
+
+          echo ""
+          echo "✅ Dry run validation complete"
+
+      - name: Execute action
+        id: execute
+        if: inputs.dry_run == false
+        run: |
+          echo "🚀 Executing Kubernetes action: ${{ inputs.action }}"
+          echo "Namespace: ${{ inputs.namespace }}"
+          echo "---"
+
+          EXIT_CODE=0
+
+          case "${{ inputs.action }}" in
+            apply)
+              echo "Applying manifest: ${{ inputs.manifest }}"
+              kubectl apply -f "${{ inputs.manifest }}" -n "${{ inputs.namespace }}" 2>&1 | tee execution.log || EXIT_CODE=$?
+              ;;
+            delete)
+              echo "Deleting resources from: ${{ inputs.manifest }}"
+              kubectl delete -f "${{ inputs.manifest }}" -n "${{ inputs.namespace }}" 2>&1 | tee execution.log || EXIT_CODE=$?
+              ;;
+            restart)
+              echo "Restarting deployment: ${{ inputs.deployment_name }}"
+              kubectl rollout restart deployment "${{ inputs.deployment_name }}" -n "${{ inputs.namespace }}" 2>&1 | tee execution.log
+              kubectl rollout status deployment "${{ inputs.deployment_name }}" -n "${{ inputs.namespace }}" --timeout=300s 2>&1 | tee -a execution.log || EXIT_CODE=$?
+              ;;
+            scale)
+              echo "Scaling deployment ${{ inputs.deployment_name }} to ${{ inputs.replicas }} replicas"
+              kubectl scale deployment "${{ inputs.deployment_name }}" -n "${{ inputs.namespace }}" --replicas=${{ inputs.replicas }} 2>&1 | tee execution.log
+              kubectl rollout status deployment "${{ inputs.deployment_name }}" -n "${{ inputs.namespace }}" --timeout=300s 2>&1 | tee -a execution.log || EXIT_CODE=$?
+              ;;
+            rollback)
+              echo "Rolling back deployment: ${{ inputs.deployment_name }}"
+              kubectl rollout undo deployment "${{ inputs.deployment_name }}" -n "${{ inputs.namespace }}" 2>&1 | tee execution.log
+              kubectl rollout status deployment "${{ inputs.deployment_name }}" -n "${{ inputs.namespace }}" --timeout=300s 2>&1 | tee -a execution.log || EXIT_CODE=$?
+              ;;
+          esac
+
+          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "✅ Action completed successfully"
+          else
+            echo "❌ Action failed with exit code: $EXIT_CODE"
+            exit $EXIT_CODE
+          fi
+
+      - name: Post-execution verification
+        if: inputs.dry_run == false
+        run: |
+          echo "📊 Post-execution verification..."
+
+          if [ -n "${{ inputs.deployment_name }}" ]; then
+            echo "Deployment status:"
+            kubectl get deployment "${{ inputs.deployment_name }}" -n "${{ inputs.namespace }}" -o wide
+
+            echo ""
+            echo "Pod status:"
+            kubectl get pods -n "${{ inputs.namespace }}" -l app="${{ inputs.deployment_name }}" -o wide
+
+            echo ""
+            echo "Recent events:"
+            kubectl get events -n "${{ inputs.namespace }}" --sort-by='.lastTimestamp' | tail -20
+          else
+            echo "Namespace resources:"
+            kubectl get all -n "${{ inputs.namespace }}"
+          fi
+
+      - name: Upload execution artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k8s-execution-${{ inputs.incident_id }}
+          path: |
+            execution.log
+            pre-state.yaml
+            pre-pods.txt
+            pre-namespace.txt
+          retention-days: 30
+
+      - name: Update ServiceNow incident
+        if: always() && inputs.dry_run == false
+        run: |
+          EXIT_CODE="${{ steps.execute.outputs.exit_code }}"
+
+          if [ -z "$EXIT_CODE" ]; then
+            EXIT_CODE="N/A"
+          fi
+
+          if [ "$EXIT_CODE" = "0" ]; then
+            STATUS="Resolved"
+            NOTES="Kubernetes action executed successfully via GitHub Actions.\n\nAction: ${{ inputs.action }}\nNamespace: ${{ inputs.namespace }}\nDeployment: ${{ inputs.deployment_name }}\nEnvironment: ${{ inputs.environment }}\nWorkflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          else
+            STATUS="In Progress"
+            NOTES="Kubernetes action failed.\n\nAction: ${{ inputs.action }}\nNamespace: ${{ inputs.namespace }}\nExit Code: $EXIT_CODE\nWorkflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\n\nPlease review the execution logs."
+          fi
+
+          # Update ServiceNow
+          curl -X PATCH \
+            -H "Content-Type: application/json" \
+            -u "${{ env.SNOW_USERNAME }}:${{ env.SNOW_PASSWORD }}" \
+            -d "{\"state\": \"$([ \"$STATUS\" = \"Resolved\" ] && echo \"6\" || echo \"2\")\", \"work_notes\": \"$NOTES\"}" \
+            "${{ env.SNOW_INSTANCE_URL }}/api/now/table/incident/${{ inputs.incident_id }}" || true
+
+  notify:
+    name: Notify on Completion
+    runs-on: ubuntu-latest
+    needs: execute
+    if: always()
+
+    steps:
+      - name: Execution summary
+        run: |
+          echo "## Kubernetes Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Action | ${{ inputs.action }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Namespace | ${{ inputs.namespace }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deployment | ${{ inputs.deployment_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Incident ID | ${{ inputs.incident_id }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dry Run | ${{ inputs.dry_run }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | ${{ needs.execute.result }} |" >> $GITHUB_STEP_SUMMARY

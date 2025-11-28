@@ -2624,12 +2624,387 @@ async def find_similar_remediations(request: SimilarRemediationsRequest):
         raise HTTPException(status_code=500, detail=f"Failed to search similar remediations: {str(e)}")
 
 
+# ============================================================================
+# Enterprise Script Execution Endpoints
+# ============================================================================
+from orchestrator.enterprise_executor import get_executor, ExecutionStatus
+from orchestrator.hybrid_matcher import HybridMatcher, create_matcher
+from orchestrator.safety_validator import SafetyValidator, create_validator
+
+
+class EnterpriseMatchRequest(BaseModel):
+    """Request to match an incident to remediation scripts"""
+    incident_id: str
+    incident_description: str
+    incident_metadata: Dict[str, Any] = {}
+    environment: str = "development"
+    max_results: int = 5
+
+
+class EnterpriseExecuteRequest(BaseModel):
+    """Request to execute a script via GitHub Actions"""
+    script_id: str
+    inputs: Dict[str, Any]
+    incident_id: str
+    environment: str = "development"
+    dry_run: bool = False
+
+
+class EnterpriseValidateRequest(BaseModel):
+    """Request to validate script execution safety"""
+    script_id: str
+    inputs: Dict[str, Any]
+    environment: str = "development"
+    user_role: str = "operator"
+
+
+@app.post("/api/enterprise/match")
+async def enterprise_match_scripts(request: EnterpriseMatchRequest):
+    """
+    Match an incident to the best remediation scripts using the hybrid algorithm.
+
+    Uses weighted scoring:
+    - Vector Search (RAG): 50%
+    - Metadata Scoring: 25%
+    - Graph Context (Neo4j): 15%
+    - Safety Scoring: 10%
+    """
+    try:
+        executor = get_executor()
+        matcher = create_matcher(executor.registry)
+
+        # Match incident to scripts
+        results = matcher.match_incident(
+            incident_description=request.incident_description,
+            incident_metadata=request.incident_metadata,
+            environment=request.environment,
+            max_results=request.max_results
+        )
+
+        # Format results
+        matches = []
+        for result in results:
+            matches.append({
+                "script_id": result.script_id,
+                "script_name": result.script_name,
+                "script_path": result.script_path,
+                "script_type": result.script_type,
+                "scores": {
+                    "vector_score": result.vector_score,
+                    "metadata_score": result.metadata_score,
+                    "graph_score": result.graph_score,
+                    "safety_score": result.safety_score,
+                    "final_score": result.final_score
+                },
+                "confidence": result.confidence,
+                "requires_approval": result.requires_approval,
+                "extracted_inputs": result.extracted_inputs,
+                "explanation": result.match_explanation
+            })
+
+        # Get best match for mandatory JSON output
+        best_match = matches[0] if matches else None
+
+        return {
+            "incident_id": request.incident_id,
+            "environment": request.environment,
+            "total_matches": len(matches),
+            "best_match": best_match,
+            "all_matches": matches,
+            "execution_ready": best_match is not None and best_match["confidence"] in ["high", "medium"],
+            "algorithm_config": {
+                "weights": {
+                    "vector_score": 0.50,
+                    "metadata_score": 0.25,
+                    "graph_score": 0.15,
+                    "safety_score": 0.10
+                },
+                "minimum_score": 0.75
+            }
+        }
+
+    except Exception as e:
+        logger.error("enterprise_match_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Script matching failed: {str(e)}")
+
+
+@app.post("/api/enterprise/validate")
+async def enterprise_validate_execution(request: EnterpriseValidateRequest):
+    """
+    Validate script execution safety before triggering GitHub Actions.
+
+    Performs comprehensive safety checks:
+    - Environment restrictions
+    - Risk level validation
+    - Input sanitization
+    - Approval requirements
+    - Forbidden action detection
+    """
+    try:
+        executor = get_executor()
+        validator = create_validator(executor.registry)
+
+        # Get script configuration
+        script = executor.get_script_by_id(request.script_id)
+        if not script:
+            raise HTTPException(status_code=404, detail=f"Script not found: {request.script_id}")
+
+        # Perform safety validation
+        report = validator.validate_execution(
+            script=script,
+            inputs=request.inputs,
+            environment=request.environment,
+            user_role=request.user_role
+        )
+
+        # Generate summary
+        summary = validator.generate_safety_summary(report)
+
+        return {
+            "script_id": request.script_id,
+            "environment": request.environment,
+            "validation_result": report.overall_result.value,
+            "can_execute": report.can_execute,
+            "requires_approval": report.requires_approval,
+            "approval_level": report.approval_level,
+            "blocking_issues": report.blocking_issues,
+            "warnings": report.warnings,
+            "checks": [
+                {
+                    "name": check.name,
+                    "result": check.result.value,
+                    "message": check.message,
+                    "severity": check.severity,
+                    "recommendation": check.recommendation
+                }
+                for check in report.checks
+            ],
+            "summary": summary
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("enterprise_validate_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Validation failed: {str(e)}")
+
+
+@app.post("/api/enterprise/execute")
+async def enterprise_execute_script(request: EnterpriseExecuteRequest):
+    """
+    Execute a script via GitHub Actions workflow.
+
+    This is the ONLY way scripts are executed - never directly.
+    Triggers the appropriate workflow based on script type.
+    """
+    try:
+        executor = get_executor()
+        validator = create_validator(executor.registry)
+
+        # Get script configuration
+        script = executor.get_script_by_id(request.script_id)
+        if not script:
+            raise HTTPException(status_code=404, detail=f"Script not found: {request.script_id}")
+
+        # Validate before execution
+        report = validator.validate_execution(
+            script=script,
+            inputs=request.inputs,
+            environment=request.environment
+        )
+
+        if not report.can_execute:
+            return {
+                "status": "validation_failed",
+                "script_id": request.script_id,
+                "can_execute": False,
+                "blocking_issues": report.blocking_issues,
+                "message": "Execution blocked by safety validation"
+            }
+
+        # Check approval requirements
+        if report.requires_approval and request.environment == "production":
+            return {
+                "status": "awaiting_approval",
+                "script_id": request.script_id,
+                "approval_level": report.approval_level,
+                "message": f"Production execution requires {report.approval_level} approval"
+            }
+
+        # Trigger GitHub Actions workflow
+        result = await executor.trigger_github_workflow(
+            script=script,
+            inputs=request.inputs,
+            incident_id=request.incident_id,
+            environment=request.environment,
+            dry_run=request.dry_run
+        )
+
+        # Log execution to Kafka
+        kafka_client.publish_event(
+            topic="agent.events",
+            event={
+                "event_type": "enterprise_execution",
+                "script_id": request.script_id,
+                "incident_id": request.incident_id,
+                "environment": request.environment,
+                "status": result.get("status"),
+                "workflow": result.get("workflow"),
+                "run_id": result.get("run_id"),
+                "timestamp": datetime.now().isoformat()
+            },
+            key=request.incident_id
+        )
+
+        return {
+            "status": result.get("status"),
+            "script_id": request.script_id,
+            "incident_id": request.incident_id,
+            "workflow": result.get("workflow"),
+            "run_id": result.get("run_id"),
+            "run_url": result.get("run_url"),
+            "dry_run": request.dry_run,
+            "message": result.get("message")
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("enterprise_execute_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Execution failed: {str(e)}")
+
+
+@app.get("/api/enterprise/execution/{run_id}")
+async def get_execution_status(run_id: int):
+    """Get the status of a GitHub Actions workflow run."""
+    try:
+        executor = get_executor()
+        status = await executor.get_workflow_status(run_id)
+
+        return {
+            "run_id": run_id,
+            "status": status.get("status"),
+            "conclusion": status.get("conclusion"),
+            "html_url": status.get("html_url"),
+            "created_at": status.get("created_at"),
+            "updated_at": status.get("updated_at")
+        }
+
+    except Exception as e:
+        logger.error("execution_status_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to get execution status: {str(e)}")
+
+
+@app.get("/api/enterprise/scripts")
+async def list_enterprise_scripts(
+    script_type: Optional[str] = None,
+    environment: Optional[str] = None,
+    risk_level: Optional[str] = None
+):
+    """List all scripts from the enterprise registry with optional filtering."""
+    try:
+        executor = get_executor()
+        scripts = executor.registry.get("scripts", [])
+
+        # Apply filters
+        if script_type:
+            scripts = [s for s in scripts if s.get("type") == script_type]
+        if environment:
+            scripts = [s for s in scripts if environment in s.get("environment_allowed", [])]
+        if risk_level:
+            scripts = [s for s in scripts if s.get("risk_level") == risk_level]
+
+        return {
+            "total": len(scripts),
+            "registry_version": executor.registry.get("version", "unknown"),
+            "scripts": [
+                {
+                    "id": s.get("id"),
+                    "name": s.get("name"),
+                    "type": s.get("type"),
+                    "description": s.get("description"),
+                    "service": s.get("service"),
+                    "component": s.get("component"),
+                    "action": s.get("action"),
+                    "risk_level": s.get("risk_level"),
+                    "auto_approve": s.get("auto_approve", False),
+                    "environment_allowed": s.get("environment_allowed", []),
+                    "required_inputs": s.get("required_inputs", []),
+                    "keywords": s.get("keywords", [])[:5]
+                }
+                for s in scripts
+            ]
+        }
+
+    except Exception as e:
+        logger.error("list_scripts_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to list scripts: {str(e)}")
+
+
+@app.post("/api/enterprise/search")
+async def search_enterprise_scripts(query: str):
+    """Search scripts by keyword, name, or error pattern."""
+    try:
+        executor = get_executor()
+        results = executor.search_scripts(query)
+
+        return {
+            "query": query,
+            "total": len(results),
+            "results": [
+                {
+                    "id": s.get("id"),
+                    "name": s.get("name"),
+                    "type": s.get("type"),
+                    "description": s.get("description"),
+                    "match_score": s.get("_match_score", 0),
+                    "risk_level": s.get("risk_level"),
+                    "keywords": s.get("keywords", [])
+                }
+                for s in results[:10]
+            ]
+        }
+
+    except Exception as e:
+        logger.error("search_scripts_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Script search failed: {str(e)}")
+
+
+@app.get("/api/enterprise/history")
+async def get_execution_history(
+    incident_id: Optional[str] = None,
+    script_id: Optional[str] = None,
+    limit: int = 50
+):
+    """Get execution history, optionally filtered by incident or script."""
+    try:
+        executor = get_executor()
+        history = executor.get_execution_history(
+            incident_id=incident_id,
+            script_id=script_id,
+            limit=limit
+        )
+
+        return {
+            "total": len(history),
+            "filters": {
+                "incident_id": incident_id,
+                "script_id": script_id
+            },
+            "executions": history
+        }
+
+    except Exception as e:
+        logger.error("get_history_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to get execution history: {str(e)}")
+
+
 @app.get("/")
 async def root():
     """Root endpoint"""
     return {
         "service": "AI Agent Platform",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "endpoints": {
             "task": "/task",
             "incidents": "/api/incidents",
@@ -2650,6 +3025,12 @@ async def root():
             "remediation_similar": "/api/remediation/similar",
             "runbooks_search": "/api/runbooks/search",
             "runbooks_index": "/api/runbooks/index",
+            "enterprise_match": "/api/enterprise/match",
+            "enterprise_validate": "/api/enterprise/validate",
+            "enterprise_execute": "/api/enterprise/execute",
+            "enterprise_scripts": "/api/enterprise/scripts",
+            "enterprise_search": "/api/enterprise/search",
+            "enterprise_history": "/api/enterprise/history",
             "health": "/health",
             "docs": "/docs"
         }

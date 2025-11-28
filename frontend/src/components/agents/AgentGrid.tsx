@@ -4,7 +4,7 @@ import { Card, CardContent } from '../ui/Card'
 import { Badge } from '../ui/Badge'
 import { AGENT_DISPLAY_NAMES } from '@/types/agent'
 import { cn } from '@/lib/utils'
-import { Bot, Activity, CheckCircle, TrendingUp } from 'lucide-react'
+import { Bot, Activity, CheckCircle, TrendingUp, Plug, Wrench } from 'lucide-react'
 
 interface AgentGridProps {
   agents: Agent[]
@@ -24,21 +24,26 @@ export function AgentGrid({ agents }: AgentGridProps) {
     }
   }
 
+  const isMCPServer = (agent: any) => agent.type === 'mcp' || agent.name?.includes('-mcp')
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-      {agents.map((agent) => (
+      {agents.map((agent: any) => (
         <Link key={agent.name} href={`/agents/${agent.name}`}>
           <Card variant="bordered" className="hover:shadow-lg transition-shadow h-full">
             <CardContent className="p-6">
               {/* Header */}
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-blue-100 text-blue-600">
-                    <Bot className="h-6 w-6" />
+                  <div className={cn(
+                    "flex h-12 w-12 items-center justify-center rounded-lg",
+                    isMCPServer(agent) ? "bg-purple-100 text-purple-600" : "bg-blue-100 text-blue-600"
+                  )}>
+                    {isMCPServer(agent) ? <Plug className="h-6 w-6" /> : <Bot className="h-6 w-6" />}
                   </div>
                   <div>
                     <h3 className="font-semibold text-gray-900">
-                      {AGENT_DISPLAY_NAMES[agent.name] || agent.name}
+                      {agent.display_name || AGENT_DISPLAY_NAMES[agent.name] || agent.name}
                     </h3>
                     <p className="text-xs text-gray-500 font-mono">{agent.name}</p>
                   </div>
@@ -108,12 +113,34 @@ export function AgentGrid({ agents }: AgentGridProps) {
                 </div>
               )}
 
+              {/* MCP Tools */}
+              {agent.tools && agent.tools.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-gray-200">
+                  <p className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                    <Wrench className="h-3 w-3" />
+                    Available Tools
+                  </p>
+                  <div className="flex flex-wrap gap-1">
+                    {agent.tools.slice(0, 4).map((tool: string, idx: number) => (
+                      <Badge key={idx} variant="info" className="text-xs">
+                        {tool}
+                      </Badge>
+                    ))}
+                    {agent.tools.length > 4 && (
+                      <Badge variant="default" className="text-xs">
+                        +{agent.tools.length - 4}
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Capabilities */}
               {agent.capabilities && agent.capabilities.length > 0 && (
                 <div className="mt-4 pt-4 border-t border-gray-200">
                   <p className="text-xs text-gray-500 mb-2">Capabilities</p>
                   <div className="flex flex-wrap gap-1">
-                    {agent.capabilities.slice(0, 3).map((cap, idx) => (
+                    {agent.capabilities.slice(0, 3).map((cap: string, idx: number) => (
                       <Badge key={idx} variant="default" className="text-xs">
                         {cap}
                       </Badge>

@@ -1,0 +1,271 @@
+name: Terraform Execution
+
+on:
+  workflow_dispatch:
+    inputs:
+      module_name:
+        description: 'Terraform module to execute'
+        required: true
+        type: string
+      action:
+        description: 'Terraform action'
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - production
+          - staging
+          - development
+      tf_vars:
+        description: 'Terraform variables as JSON'
+        required: false
+        type: string
+        default: '{}'
+      incident_id:
+        description: 'ServiceNow Incident ID'
+        required: true
+        type: string
+      approval_id:
+        description: 'HITL Approval ID'
+        required: false
+        type: string
+      auto_approve:
+        description: 'Auto-approve apply (only for low-risk)'
+        required: true
+        type: boolean
+        default: false
+
+env:
+  TF_IN_AUTOMATION: true
+  TF_INPUT: false
+  GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
+
+jobs:
+  format:
+    name: Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+
+      - name: Terraform Format
+        run: terraform fmt -check -recursive terraform/
+
+  validate:
+    name: Validate Configuration
+    needs: format
+    runs-on: ubuntu-latest
+    outputs:
+      plan_file: ${{ steps.plan.outputs.plan_file }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+
+      - name: Configure GCP Credentials
+        run: |
+          echo '${{ secrets.GCP_SA_KEY }}' > /tmp/gcp-key.json
+
+      - name: Terraform Init
+        working-directory: terraform/${{ inputs.module_name }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=state/${{ inputs.environment }}/${{ inputs.module_name }}"
+
+      - name: Terraform Validate
+        working-directory: terraform/${{ inputs.module_name }}
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: terraform/${{ inputs.module_name }}
+        run: |
+          echo "=========================================="
+          echo "TERRAFORM PLAN"
+          echo "=========================================="
+          echo "Module: ${{ inputs.module_name }}"
+          echo "Environment: ${{ inputs.environment }}"
+          echo "Incident: ${{ inputs.incident_id }}"
+          echo "=========================================="
+
+          # Parse TF vars from JSON
+          TF_VAR_JSON='${{ inputs.tf_vars }}'
+
+          terraform plan \
+            -var="environment=${{ inputs.environment }}" \
+            -var="incident_id=${{ inputs.incident_id }}" \
+            -out=tfplan \
+            -detailed-exitcode || exit_code=$?
+
+          if [ "$exit_code" == "2" ]; then
+            echo "changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "changes=false" >> $GITHUB_OUTPUT
+          fi
+
+          echo "plan_file=tfplan" >> $GITHUB_OUTPUT
+
+      - name: Upload Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ github.run_id }}
+          path: terraform/${{ inputs.module_name }}/tfplan
+          retention-days: 7
+
+      - name: Plan Summary
+        working-directory: terraform/${{ inputs.module_name }}
+        run: |
+          echo "## Terraform Plan Summary" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          terraform show -no-color tfplan >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  apply:
+    name: Apply Changes
+    needs: validate
+    if: ${{ inputs.action == 'apply' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+
+      - name: Configure GCP Credentials
+        run: |
+          echo '${{ secrets.GCP_SA_KEY }}' > /tmp/gcp-key.json
+
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-${{ github.run_id }}
+          path: terraform/${{ inputs.module_name }}
+
+      - name: Terraform Init
+        working-directory: terraform/${{ inputs.module_name }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=state/${{ inputs.environment }}/${{ inputs.module_name }}"
+
+      - name: Terraform Apply
+        id: apply
+        working-directory: terraform/${{ inputs.module_name }}
+        run: |
+          echo "=========================================="
+          echo "TERRAFORM APPLY"
+          echo "=========================================="
+          echo "Module: ${{ inputs.module_name }}"
+          echo "Environment: ${{ inputs.environment }}"
+          echo "Incident: ${{ inputs.incident_id }}"
+          echo "=========================================="
+
+          terraform apply -auto-approve tfplan
+
+      - name: Update ServiceNow Incident
+        if: always()
+        env:
+          SNOW_INSTANCE: ${{ secrets.SNOW_INSTANCE_URL }}
+          SNOW_USER: ${{ secrets.SNOW_USERNAME }}
+          SNOW_PASS: ${{ secrets.SNOW_PASSWORD }}
+        run: |
+          python3 << 'EOF'
+          import os
+          import requests
+          from requests.auth import HTTPBasicAuth
+
+          instance = os.environ.get('SNOW_INSTANCE')
+          user = os.environ.get('SNOW_USER')
+          password = os.environ.get('SNOW_PASS')
+          incident_id = '${{ inputs.incident_id }}'
+          status = '${{ job.status }}'
+
+          if instance and user and password:
+              url = f"{instance}/api/now/table/incident"
+              params = {'sysparm_query': f'number={incident_id}', 'sysparm_limit': 1}
+
+              resp = requests.get(url, auth=HTTPBasicAuth(user, password), params=params)
+              if resp.ok and resp.json().get('result'):
+                  sys_id = resp.json()['result'][0]['sys_id']
+
+                  work_note = f"Terraform Execution Complete\n"
+                  work_note += f"Module: ${{ inputs.module_name }}\n"
+                  work_note += f"Action: ${{ inputs.action }}\n"
+                  work_note += f"Environment: ${{ inputs.environment }}\n"
+                  work_note += f"Status: {status}\n"
+                  work_note += f"Run ID: ${{ github.run_id }}"
+
+                  update_url = f"{instance}/api/now/table/incident/{sys_id}"
+                  requests.patch(update_url, auth=HTTPBasicAuth(user, password),
+                               json={'work_notes': work_note})
+                  print(f"Updated incident {incident_id}")
+          EOF
+
+      - name: Apply Summary
+        if: always()
+        run: |
+          echo "## Terraform Apply Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Module | ${{ inputs.module_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Incident | ${{ inputs.incident_id }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | ${{ job.status }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Run ID | ${{ github.run_id }} |" >> $GITHUB_STEP_SUMMARY
+
+  destroy:
+    name: Destroy Resources
+    needs: validate
+    if: ${{ inputs.action == 'destroy' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}-destroy
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+
+      - name: Configure GCP Credentials
+        run: |
+          echo '${{ secrets.GCP_SA_KEY }}' > /tmp/gcp-key.json
+
+      - name: Terraform Init
+        working-directory: terraform/${{ inputs.module_name }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=state/${{ inputs.environment }}/${{ inputs.module_name }}"
+
+      - name: Terraform Destroy
+        working-directory: terraform/${{ inputs.module_name }}
+        run: |
+          echo "=========================================="
+          echo "TERRAFORM DESTROY - CAUTION"
+          echo "=========================================="
+          terraform destroy -auto-approve \
+            -var="environment=${{ inputs.environment }}" \
+            -var="incident_id=${{ inputs.incident_id }}"
