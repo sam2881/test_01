@@ -1,0 +1,385 @@
+version: "3.9"
+
+services:
+
+  # ==========================================
+  # Message Queue Layer
+  # ==========================================
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: "2181"
+      ZOOKEEPER_TICK_TIME: "2000"
+    ports:
+      - "2181:2181"
+    networks:
+      - agent-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+    networks:
+      - agent-network
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui
+    ports:
+      - "8085:8080"
+    environment:
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:9092"
+      KAFKA_CLUSTERS_0_NAME: "local"
+    depends_on:
+      - kafka
+    networks:
+      - agent-network
+
+  # ==========================================
+  # Memory & Database Layer
+  # ==========================================
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - agent-network
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+      POSTGRES_DB: agentdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - agent-network
+
+  weaviate:
+    image: semitechnologies/weaviate:latest
+    ports:
+      - "8081:8080"
+    environment:
+      QUERY_DEFAULTS_LIMIT: "50"
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: "./data"
+      ENABLE_MODULES: "text2vec-openai"
+      CLUSTER_HOSTNAME: "weaviate"
+      DEFAULT_VECTORIZER_MODULE: "text2vec-openai"
+      OPENAI_APIKEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    networks:
+      - agent-network
+
+  neo4j:
+    image: neo4j:5.20
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/adminadmin
+      NEO4J_PLUGINS: '["apoc"]'
+    volumes:
+      - neo4j_data:/data
+    networks:
+      - agent-network
+
+  # ==========================================
+  # Observability Stack
+  # ==========================================
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - agent-network
+
+  grafana:
+    image: grafana/grafana:10.2.3
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - ../monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - agent-network
+
+  langfuse:
+    image: langfuse/langfuse:latest
+    ports:
+      - "3001:3000"
+    environment:
+      - DATABASE_URL=postgresql://admin:admin123@postgres:5432/langfuse
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-change-this-secret}
+      - NEXTAUTH_URL=http://localhost:3001
+      - SALT=${SALT:-change-this-salt}
+    depends_on:
+      - postgres
+    networks:
+      - agent-network
+
+  # ==========================================
+  # DSPy Optimization Service
+  # ==========================================
+  dspy_optimizer:
+    build:
+      context: ../backend/dspy_service
+      dockerfile: Dockerfile
+    ports:
+      - "8090:8090"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - POSTGRES_URL=postgresql://admin:admin123@postgres:5432/agentdb
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_HOST=http://langfuse:3000
+    depends_on:
+      - postgres
+      - langfuse
+    networks:
+      - agent-network
+
+  # ==========================================
+  # Orchestrator (Main Agent)
+  # ==========================================
+  orchestrator:
+    build:
+      context: ../backend/orchestrator
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DSPY_OPTIMIZER_URL=http://dspy_optimizer:8090
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_HOST=http://langfuse:3000
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - WEAVIATE_URL=http://weaviate:8081
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USERNAME=neo4j
+      - NEO4J_PASSWORD=password123
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=admin123
+      - POSTGRES_DB=agentdb
+    depends_on:
+      - redis
+      - weaviate
+      - neo4j
+      - kafka
+      - postgres
+      - dspy_optimizer
+      - langfuse
+    networks:
+      - agent-network
+
+  # ==========================================
+  # Agent Services
+  # ==========================================
+  servicenow_agent:
+    build:
+      context: ../backend/agents/servicenow
+      dockerfile: Dockerfile
+    ports:
+      - "8010:8010"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DSPY_OPTIMIZER_URL=http://dspy_optimizer:8090
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_HOST=http://langfuse:3000
+      - SNOW_INSTANCE_URL=${SNOW_INSTANCE_URL}
+      - SNOW_USERNAME=${SNOW_USERNAME}
+      - SNOW_PASSWORD=${SNOW_PASSWORD}
+      - WEAVIATE_URL=http://weaviate:8081
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USERNAME=neo4j
+      - NEO4J_PASSWORD=password123
+    depends_on:
+      - dspy_optimizer
+      - weaviate
+      - neo4j
+    networks:
+      - agent-network
+
+  jira_agent:
+    build:
+      context: ../backend/agents/jira
+      dockerfile: Dockerfile
+    ports:
+      - "8011:8011"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DSPY_OPTIMIZER_URL=http://dspy_optimizer:8090
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_HOST=http://langfuse:3000
+      - JIRA_URL=${JIRA_URL}
+      - JIRA_USERNAME=${JIRA_USERNAME}
+      - JIRA_API_TOKEN=${JIRA_API_TOKEN}
+      - JIRA_PROJECT_KEY=${JIRA_PROJECT_KEY}
+    depends_on:
+      - dspy_optimizer
+    networks:
+      - agent-network
+
+  github_agent:
+    build:
+      context: ../backend/agents/github
+      dockerfile: Dockerfile
+    ports:
+      - "8012:8012"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DSPY_OPTIMIZER_URL=http://dspy_optimizer:8090
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_HOST=http://langfuse:3000
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_ORG=${GITHUB_ORG}
+      - GITHUB_REPO=${GITHUB_REPO}
+    depends_on:
+      - dspy_optimizer
+    networks:
+      - agent-network
+
+  infra_agent:
+    build:
+      context: ../backend/agents/infra
+      dockerfile: Dockerfile
+    ports:
+      - "8013:8013"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DSPY_OPTIMIZER_URL=http://dspy_optimizer:8090
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_HOST=http://langfuse:3000
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+    depends_on:
+      - dspy_optimizer
+    networks:
+      - agent-network
+
+  data_agent:
+    build:
+      context: ../backend/agents/data
+      dockerfile: Dockerfile
+    ports:
+      - "8014:8014"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DSPY_OPTIMIZER_URL=http://dspy_optimizer:8090
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_HOST=http://langfuse:3000
+    depends_on:
+      - dspy_optimizer
+    networks:
+      - agent-network
+
+  gcp_monitor_agent:
+    build:
+      context: ../backend/agents/gcp_monitor
+      dockerfile: Dockerfile
+    ports:
+      - "8015:8015"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credentials.json
+      - SERVICENOW_AGENT_URL=http://servicenow_agent:8010/process
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_HOST=http://langfuse:3000
+    volumes:
+      - ${GCP_CREDENTIALS_PATH:-./gcp-credentials.json}:/app/gcp-credentials.json:ro
+    depends_on:
+      - servicenow_agent
+      - dspy_optimizer
+    networks:
+      - agent-network
+
+  # ==========================================
+  # Stream Processing
+  # ==========================================
+  stream_processor:
+    build:
+      context: ../backend/streaming
+      dockerfile: Dockerfile
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      - kafka
+      - redis
+    networks:
+      - agent-network
+
+  # ==========================================
+  # Frontend Application
+  # ==========================================
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3002:3001"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://orchestrator:8000
+      - NEXT_PUBLIC_WS_URL=ws://orchestrator:8000
+      - NODE_ENV=production
+    depends_on:
+      - orchestrator
+    networks:
+      - agent-network
+
+networks:
+  agent-network:
+    driver: bridge
+
+volumes:
+  redis_data:
+  postgres_data:
+  weaviate_data:
+  neo4j_data:
+  prometheus_data:
+  grafana_data:

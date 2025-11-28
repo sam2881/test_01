@@ -1,0 +1,29 @@
+{
+  "dashboard": {
+    "title": "AI Agent Platform Dashboard",
+    "panels": [
+      {
+        "title": "Task Processing Rate",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8}
+      },
+      {
+        "title": "Agent Response Times",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8}
+      },
+      {
+        "title": "Error Rate",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8}
+      },
+      {
+        "title": "Active Tasks by Agent",
+        "type": "piechart",
+        "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8}
+      }
+    ],
+    "schemaVersion": 16,
+    "version": 1
+  }
+}

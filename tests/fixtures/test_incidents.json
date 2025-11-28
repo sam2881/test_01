@@ -1,0 +1,112 @@
+[
+  {
+    "number": "INC0010001",
+    "short_description": "API Gateway timeout errors in production",
+    "description": "Users reporting 502 errors when accessing the API gateway. Affecting approximately 15% of requests during peak hours. Need immediate investigation of load balancer and backend service health.",
+    "priority": "1 - Critical",
+    "state": "New",
+    "category": "Network",
+    "assignment_group": "Infrastructure Team",
+    "opened_at": "2025-11-17 08:00:00",
+    "sys_id": "abc123def456"
+  },
+  {
+    "number": "INC0010002",
+    "short_description": "Database connection pool exhausted",
+    "description": "PostgreSQL connection pool reaching maximum capacity causing application slowdowns. Connection pool size is 100, average active connections is 95. Need to increase pool size or investigate connection leaks in application code.",
+    "priority": "2 - High",
+    "state": "In Progress",
+    "category": "Database",
+    "assignment_group": "Database Team",
+    "opened_at": "2025-11-17 07:30:00",
+    "sys_id": "def456ghi789"
+  },
+  {
+    "number": "INC0010003",
+    "short_description": "Redis cache high memory usage at 90%",
+    "description": "Redis instance consuming 90% of allocated memory (14.4GB of 16GB). Need to implement TTL policies and review cache eviction strategy. Some keys are not expiring as expected.",
+    "priority": "2 - High",
+    "state": "New",
+    "category": "Infrastructure",
+    "assignment_group": "Infrastructure Team",
+    "opened_at": "2025-11-17 06:45:00",
+    "sys_id": "ghi789jkl012"
+  },
+  {
+    "number": "INC0010004",
+    "short_description": "Kafka consumer lag increasing rapidly",
+    "description": "Consumer group 'agent-platform' showing lag of 10000+ messages and growing. Current processing rate is 50 msg/sec but incoming rate is 80 msg/sec. Processing speed needs optimization or more consumers needed.",
+    "priority": "2 - High",
+    "state": "In Progress",
+    "category": "Messaging",
+    "assignment_group": "Platform Team",
+    "opened_at": "2025-11-17 05:00:00",
+    "sys_id": "jkl012mno345"
+  },
+  {
+    "number": "INC0010005",
+    "short_description": "Neo4j query performance degradation",
+    "description": "Graph queries taking 5+ seconds to execute. Affected queries involve relationship traversal over 3+ hops. Need to add indexes on frequently queried properties and optimize Cypher queries to reduce scanning.",
+    "priority": "3 - Moderate",
+    "state": "New",
+    "category": "Database",
+    "assignment_group": "Database Team",
+    "opened_at": "2025-11-17 04:15:00",
+    "sys_id": "mno345pqr678"
+  },
+  {
+    "number": "INC0010006",
+    "short_description": "Weaviate vector search timeout on large queries",
+    "description": "Vector similarity searches timing out for result sets > 1000 items. Query timeout set to 30 seconds. Need to adjust timeout configuration and optimize vector indexing with HNSW parameters.",
+    "priority": "3 - Moderate",
+    "state": "Assigned",
+    "category": "AI/ML",
+    "assignment_group": "ML Team",
+    "opened_at": "2025-11-17 03:30:00",
+    "sys_id": "pqr678stu901"
+  },
+  {
+    "number": "INC0010007",
+    "short_description": "LLM API rate limit exceeded - OpenAI 429 errors",
+    "description": "OpenAI API returning 429 (rate limit) errors during peak usage. Current limit is 3,500 requests/min. Need to implement request queuing, exponential backoff, and rate limiting on client side to stay within quota.",
+    "priority": "2 - High",
+    "state": "In Progress",
+    "category": "AI/ML",
+    "assignment_group": "ML Team",
+    "opened_at": "2025-11-17 02:00:00",
+    "sys_id": "stu901vwx234"
+  },
+  {
+    "number": "INC0010008",
+    "short_description": "Frontend Next.js build failing with OOM errors",
+    "description": "Next.js build process failing intermittently with 'JavaScript heap out of memory' errors. Current Node heap size is 4GB. Need to investigate memory-intensive dependencies and increase build resources or optimize build process.",
+    "priority": "3 - Moderate",
+    "state": "New",
+    "category": "Application",
+    "assignment_group": "Development Team",
+    "opened_at": "2025-11-17 01:15:00",
+    "sys_id": "vwx234yza567"
+  },
+  {
+    "number": "INC0010009",
+    "short_description": "Prometheus unable to scrape application metrics",
+    "description": "Monitoring system unable to collect metrics from application. /metrics endpoint returning 503 errors. Prometheus showing 'context deadline exceeded' errors. Need to verify metrics exporter is running and endpoint is accessible.",
+    "priority": "2 - High",
+    "state": "Assigned",
+    "category": "Monitoring",
+    "assignment_group": "Infrastructure Team",
+    "opened_at": "2025-11-17 00:30:00",
+    "sys_id": "yza567bcd890"
+  },
+  {
+    "number": "INC0010010",
+    "short_description": "JWT authentication tokens expiring prematurely",
+    "description": "User authentication tokens expiring before configured 24-hour TTL. Users being logged out after 2-3 hours instead of 24 hours. Token validation showing clock skew issues. Need to investigate JWT signing and validation logic.",
+    "priority": "2 - High",
+    "state": "In Progress",
+    "category": "Security",
+    "assignment_group": "Security Team",
+    "opened_at": "2025-11-16 23:00:00",
+    "sys_id": "bcd890efg123"
+  }
+]

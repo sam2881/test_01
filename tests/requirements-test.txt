@@ -1,0 +1,39 @@
+# Testing dependencies for AI Agent Platform
+
+# Core testing framework
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+pytest-timeout==2.2.0
+pytest-mock==3.12.0
+pytest-xdist==3.5.0  # Parallel test execution
+
+# HTTP testing
+httpx==0.25.2
+requests-mock==1.11.0
+
+# Mocking and fixtures
+faker==20.1.0
+factory-boy==3.3.0
+
+# Performance testing
+locust==2.20.0  # Load testing
+pytest-benchmark==4.0.0
+
+# Security testing
+safety==2.3.5  # Dependency vulnerability scanner
+bandit==1.7.5  # Security linter
+
+# LLM testing
+tiktoken==0.5.2  # Token counting
+langchain==0.1.0  # For testing LangChain components
+
+# Code quality
+black==23.12.1
+flake8==7.0.0
+mypy==1.8.0
+pylint==3.0.3
+
+# Additional utilities
+psutil==5.9.6  # System monitoring
+python-dotenv==1.0.0  # Environment variables

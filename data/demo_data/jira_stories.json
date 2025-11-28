@@ -1,0 +1,53 @@
+[
+  {
+    "story_id": "ENG-101",
+    "title": "Implement OAuth2 Authentication for API Gateway",
+    "description": "As a user, I want to securely authenticate using OAuth2 so that my credentials are protected.\n\nAcceptance Criteria:\n- Support OAuth2 authorization code flow\n- Implement JWT token validation\n- Add token refresh mechanism\n- Support multiple identity providers (Google, GitHub)\n- Include rate limiting for auth endpoints",
+    "type": "feature",
+    "priority": "High",
+    "story_points": 8,
+    "labels": ["security", "authentication", "api"],
+    "test_cases_needed": true
+  },
+  {
+    "story_id": "ENG-102",
+    "title": "Add Redis Caching Layer for User Service",
+    "description": "Implement Redis caching to improve user service response times.\n\nAcceptance Criteria:\n- Cache user profile data with 1-hour TTL\n- Implement cache invalidation on user updates\n- Add cache hit/miss metrics\n- Handle cache failures gracefully\n- Add configuration for cache settings",
+    "type": "feature",
+    "priority": "Medium",
+    "story_points": 5,
+    "labels": ["performance", "caching", "redis"],
+    "test_cases_needed": true
+  },
+  {
+    "story_id": "ENG-103",
+    "title": "Fix Memory Leak in Background Job Processor",
+    "description": "Memory usage increases continuously in the job processor, causing OOM crashes after 24 hours.\n\nSteps to Reproduce:\n1. Start job processor\n2. Monitor memory usage over 24 hours\n3. Observe steady increase from 500MB to 4GB\n\nExpected: Memory should stabilize around 500-800MB\nActual: Memory increases to 4GB and causes crash",
+    "type": "bug",
+    "priority": "Critical",
+    "story_points": 8,
+    "labels": ["bug", "memory-leak", "background-jobs"],
+    "test_cases_needed": true
+  },
+  {
+    "story_id": "ENG-104",
+    "title": "Create Automated Test Suite for Payment Service",
+    "description": "Develop comprehensive automated tests for the payment service.\n\nAcceptance Criteria:\n- Unit tests for payment processing logic\n- Integration tests with payment gateway\n- Mock external payment APIs\n- Achieve 80%+ code coverage\n- Add tests to CI/CD pipeline",
+    "type": "technical-debt",
+    "priority": "High",
+    "story_points": 13,
+    "labels": ["testing", "payment", "automation"],
+    "test_cases_needed": false,
+    "test_code_example": "PaymentServiceTest.java"
+  },
+  {
+    "story_id": "ENG-105",
+    "title": "Implement Database Connection Pooling",
+    "description": "Add connection pooling to reduce database connection overhead and improve performance.\n\nAcceptance Criteria:\n- Implement HikariCP connection pool\n- Configure min/max pool sizes\n- Add connection timeout settings\n- Monitor pool metrics\n- Document configuration options",
+    "type": "feature",
+    "priority": "Medium",
+    "story_points": 5,
+    "labels": ["database", "performance", "optimization"],
+    "test_cases_needed": true
+  }
+]

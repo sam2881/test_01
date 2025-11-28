@@ -1,0 +1,90 @@
+[
+  {
+    "key": "ENG-101",
+    "summary": "Write pytest unit tests for orchestrator module",
+    "description": "Create comprehensive unit tests for the orchestrator module including workflow creation, agent routing, error handling, and state management. Target 80% code coverage.",
+    "priority": "High",
+    "status": "To Do",
+    "assignee": "test.user@company.com",
+    "labels": ["testing", "pytest", "unit-tests", "orchestrator"],
+    "created": "2025-11-17T08:00:00Z",
+    "story_points": 5
+  },
+  {
+    "key": "ENG-102",
+    "summary": "Create integration tests for RAG pipeline",
+    "description": "Develop integration tests for RAG pipeline covering Weaviate and Neo4j integration, context retrieval, and LLM response generation. Include performance benchmarks.",
+    "priority": "High",
+    "status": "To Do",
+    "assignee": "test.user@company.com",
+    "labels": ["testing", "pytest", "integration-tests", "rag"],
+    "created": "2025-11-17T08:05:00Z",
+    "story_points": 8
+  },
+  {
+    "key": "ENG-103",
+    "summary": "Add E2E tests for ServiceNow incident workflow",
+    "description": "Create end-to-end tests for ServiceNow integration testing incident creation, updates, comments, queries, and error handling. Use test instance for validation.",
+    "priority": "Medium",
+    "status": "To Do",
+    "assignee": "test.user@company.com",
+    "labels": ["testing", "pytest", "e2e-tests", "servicenow"],
+    "created": "2025-11-17T08:10:00Z",
+    "story_points": 5
+  },
+  {
+    "key": "ENG-104",
+    "summary": "Implement performance tests for chat endpoint",
+    "description": "Create performance tests for /chat/ API endpoint measuring response time under load, concurrent request handling, memory usage, and database pool behavior. Target: handle 100 concurrent requests with p95 < 2s.",
+    "priority": "Medium",
+    "status": "In Progress",
+    "assignee": "qa.engineer@company.com",
+    "labels": ["testing", "pytest", "performance-tests", "api"],
+    "created": "2025-11-17T08:15:00Z",
+    "story_points": 8
+  },
+  {
+    "key": "ENG-105",
+    "summary": "Write security tests for API authentication",
+    "description": "Develop security tests covering JWT token validation, unauthorized access attempts, SQL injection protection, XSS protection, and rate limiting. Ensure OWASP Top 10 coverage.",
+    "priority": "High",
+    "status": "To Do",
+    "assignee": "security.team@company.com",
+    "labels": ["testing", "pytest", "security-tests", "authentication"],
+    "created": "2025-11-17T08:20:00Z",
+    "story_points": 13
+  },
+  {
+    "key": "ENG-106",
+    "summary": "Create LLM hallucination detection tests",
+    "description": "Implement tests to detect and prevent LLM hallucinations including fact verification, confidence score validation, source attribution, and detection of fabricated information. Target >90% detection rate.",
+    "priority": "Medium",
+    "status": "To Do",
+    "assignee": "ml.engineer@company.com",
+    "labels": ["testing", "pytest", "llm-tests", "hallucination"],
+    "created": "2025-11-17T08:25:00Z",
+    "story_points": 8
+  },
+  {
+    "key": "ENG-107",
+    "summary": "Add regression tests for critical workflows",
+    "description": "Create regression test suite for critical paths: user authentication, incident creation, AI chat, RAG retrieval, and report generation. Run on every deployment to detect breaking changes.",
+    "priority": "High",
+    "status": "In Progress",
+    "assignee": "qa.lead@company.com",
+    "labels": ["testing", "pytest", "regression-tests", "automation"],
+    "created": "2025-11-17T08:30:00Z",
+    "story_points": 5
+  },
+  {
+    "key": "ENG-108",
+    "summary": "Implement smoke tests for deployment validation",
+    "description": "Create smoke test suite for post-deployment validation checking all services, database connections, API endpoints, external integrations, and critical features. Must run in under 2 minutes.",
+    "priority": "High",
+    "status": "To Do",
+    "assignee": "devops.engineer@company.com",
+    "labels": ["testing", "pytest", "smoke-tests", "deployment"],
+    "created": "2025-11-17T08:35:00Z",
+    "story_points": 3
+  }
+]
