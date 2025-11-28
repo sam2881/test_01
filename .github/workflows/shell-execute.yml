@@ -128,8 +128,8 @@ jobs:
           # Convert JSON to environment variables
           echo "$ARGS" | jq -r 'to_entries | .[] | "SCRIPT_\(.key | ascii_upcase)=\(.value)"' >> $GITHUB_ENV
 
-          # Also create a flat args string
-          FLAT_ARGS=$(echo "$ARGS" | jq -r 'to_entries | map("\(.key)=\(.value)") | join(" ")')
+          # Also create a flat args string with --key value format
+          FLAT_ARGS=$(echo "$ARGS" | jq -r 'to_entries | map("--\(.key) \(.value)") | join(" ")')
           echo "flat_args=$FLAT_ARGS" >> $GITHUB_OUTPUT
 
       - name: Execute script (dry-run)
