@@ -34,6 +34,10 @@ KAFKA_BOOTSTRAP = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:29092')
 CONSUMER_GROUP = os.getenv('KAFKA_CONSUMER_GROUP', 'ai-agent-consumer')
 AUTO_REMEDIATE = os.getenv('AUTO_REMEDIATE', 'false').lower() == 'true'
 
+# Redis keys for incident cache
+INCIDENTS_CACHE_KEY = "incidents:active"
+INCIDENTS_CACHE_TTL = 600  # 10 minutes - longer TTL for reliability
+
 
 class IncidentConsumer:
     """
@@ -76,8 +80,77 @@ class IncidentConsumer:
 
         self.running = False
         self.processed_count = 0
+        self.incidents_cache = {}  # In-memory cache for current incidents
 
         logger.info("kafka_consumer_initialized")
+
+    def _store_incident_in_redis(self, incident_data: dict):
+        """
+        Store incident in Redis cache for API to read.
+
+        This maintains a list of active incidents that the /api/incidents
+        endpoint can read without calling ServiceNow directly.
+        """
+        incident_id = incident_data.get('number', incident_data.get('incident_id'))
+        if not incident_id:
+            return
+
+        try:
+            # Format incident for API consumption
+            formatted_incident = {
+                "incident_id": incident_data.get("number", incident_id),
+                "sys_id": incident_data.get("sys_id", ""),
+                "short_description": incident_data.get("short_description", ""),
+                "description": incident_data.get("description", ""),
+                "priority": incident_data.get("priority", "3"),
+                "state": incident_data.get("state", "1"),
+                "urgency": incident_data.get("urgency", "2"),
+                "impact": incident_data.get("impact", "2"),
+                "category": incident_data.get("category", ""),
+                "subcategory": incident_data.get("subcategory", ""),
+                "created_on": incident_data.get("sys_created_on", ""),
+                "updated_on": incident_data.get("sys_updated_on", datetime.now().isoformat()),
+            }
+
+            # Store individual incident
+            incident_key = f"incident:{incident_id}"
+            redis_client.set(incident_key, json.dumps(formatted_incident), ex=INCIDENTS_CACHE_TTL)
+
+            # Update in-memory cache
+            self.incidents_cache[incident_id] = formatted_incident
+
+            # Update the active incidents list in Redis
+            self._update_incidents_list()
+
+            logger.info("incident_stored_in_redis", incident_id=incident_id)
+
+        except Exception as e:
+            logger.error("redis_store_error", incident_id=incident_id, error=str(e))
+
+    def _update_incidents_list(self):
+        """Update the full incidents list in Redis for API consumption"""
+        try:
+            incidents_list = list(self.incidents_cache.values())
+
+            # Sort by updated_on descending
+            incidents_list.sort(key=lambda x: x.get('updated_on', ''), reverse=True)
+
+            # Limit to 50 most recent
+            incidents_list = incidents_list[:50]
+
+            cache_data = {
+                "total": len(incidents_list),
+                "source": "kafka_consumer",
+                "kafka_published": True,
+                "cached_at": datetime.now().isoformat(),
+                "incidents": incidents_list
+            }
+
+            redis_client.set(INCIDENTS_CACHE_KEY, json.dumps(cache_data), ex=INCIDENTS_CACHE_TTL)
+            logger.info("incidents_list_updated", count=len(incidents_list))
+
+        except Exception as e:
+            logger.error("redis_list_update_error", error=str(e))
 
     async def process_servicenow_incident(self, incident_data: dict):
         """
@@ -101,10 +174,13 @@ class IncidentConsumer:
                    incident_id=incident_id,
                    source="servicenow.incidents")
 
-        # Check idempotency - skip if recently processed
+        # ALWAYS store incident in Redis cache (for API to read)
+        self._store_incident_in_redis(incident_data)
+
+        # Check idempotency - skip AI processing if recently processed
         cache_key = f"processed:{incident_id}"
         if redis_client.get(cache_key):
-            logger.info("incident_already_processed", incident_id=incident_id)
+            logger.info("incident_already_processed_for_ai", incident_id=incident_id)
             return
 
         try:
@@ -162,7 +238,7 @@ class IncidentConsumer:
             self.producer.flush()
 
             # Mark as processed (TTL 1 hour)
-            redis_client.setex(cache_key, 3600, "processed")
+            redis_client.set(cache_key, "processed", ex=3600)
 
             self.processed_count += 1
             logger.info("incident_processed_successfully",

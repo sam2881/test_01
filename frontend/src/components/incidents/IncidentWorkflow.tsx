@@ -16,7 +16,22 @@ import {
   X,
   Check,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  FileInput,
+  FileText,
+  Scale,
+  Tag,
+  Search,
+  GitBranch,
+  Merge,
+  Target,
+  Shield,
+  ShieldCheck,
+  Play,
+  ClipboardCheck,
+  XCircle,
+  BookOpen,
+  Lightbulb
 } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -120,7 +135,9 @@ export function IncidentWorkflow({
   const [rejectionReason, setRejectionReason] = useState('')
 
   const getStepIcon = (stepId: string) => {
+    // Support all 18 LangGraph workflow nodes
     const icons: Record<string, any> = {
+      // Legacy 8-step naming
       'step1_analysis': Brain,
       'step2_agent_selection': Bot,
       'step3_human_override': UserCheck,
@@ -128,7 +145,26 @@ export function IncidentWorkflow({
       'step5_approval': UserCheck,
       'step6_execution': Zap,
       'step7_confirmation': CheckSquare,
-      'step8_learning': Database
+      'step8_learning': Database,
+      // New 18-step LangGraph nodes
+      'node_1_ingest': FileInput,
+      'node_2_parse_context': FileText,
+      'node_3_judge_log_quality': Scale,
+      'node_4_classify_incident': Tag,
+      'node_5_judge_classification': CheckCircle,
+      'node_6_rag_search': Search,
+      'node_7_judge_rag': Scale,
+      'node_8_graph_search': GitBranch,
+      'node_9_merge_context': Merge,
+      'node_10_match_scripts': Target,
+      'node_11_judge_script_selection': Scale,
+      'node_12_generate_plan': BookOpen,
+      'node_13_judge_plan_safety': Shield,
+      'node_14_approval_workflow': UserCheck,
+      'node_15_execute_pipeline': Play,
+      'node_16_validate_fix': ClipboardCheck,
+      'node_17_close_ticket': CheckSquare,
+      'node_18_learn': Lightbulb
     }
     return icons[stepId] || AlertCircle
   }

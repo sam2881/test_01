@@ -38,8 +38,8 @@ echo ""
 # Backend Services
 echo "🔧 Backend Services:"
 echo "----------------------------------------"
-check_service "HITL API (8000)   " "curl -s http://localhost:8000/health"
-check_service "Infra Agent (8013)" "curl -s http://localhost:8013/health"
+check_service "Orchestrator (8000)" "curl -s http://localhost:8000/health"
+check_service "Infra Agent (8013) " "curl -s http://localhost:8013/health"
 echo ""
 
 # Frontend
@@ -219,7 +219,7 @@ else
     echo "Please start services:"
     echo "  1. cd deployment && docker-compose up -d"
     echo "  2. python3 backend/rag/script_library_indexer.py"
-    echo "  3. cd backend/orchestrator && python3 hitl_api.py"
+    echo "  3. cd backend/orchestrator && python3 main.py"
 fi
 
 echo ""

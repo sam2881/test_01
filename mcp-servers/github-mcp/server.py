@@ -4,12 +4,22 @@ GitHub MCP Server
 Provides MCP protocol access to GitHub APIs
 """
 import os
+import sys
 import asyncio
+import time
 from typing import Any, Dict, List, Optional
 from github import Github
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
+
+# Add parent directory for shared modules
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from shared.metrics import start_metrics_server, ToolMetrics, APIMetrics
+
+# Server name and metrics port
+SERVER_NAME = "github-mcp"
+METRICS_PORT = int(os.getenv("METRICS_PORT", "8092"))
 
 
 class GitHubMCPServer:
@@ -173,65 +183,65 @@ class GitHubMCPServer:
         @self.server.call_tool()
         async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
             """Handle tool calls"""
+            with ToolMetrics(SERVER_NAME, name):
+                if name == "get_repository":
+                    return await self._get_repository(
+                        arguments["owner"],
+                        arguments["repo"]
+                    )
 
-            if name == "get_repository":
-                return await self._get_repository(
-                    arguments["owner"],
-                    arguments["repo"]
-                )
+                elif name == "create_pull_request":
+                    return await self._create_pull_request(
+                        arguments["owner"],
+                        arguments["repo"],
+                        arguments["title"],
+                        arguments.get("body", ""),
+                        arguments["head"],
+                        arguments.get("base", "main")
+                    )
 
-            elif name == "create_pull_request":
-                return await self._create_pull_request(
-                    arguments["owner"],
-                    arguments["repo"],
-                    arguments["title"],
-                    arguments.get("body", ""),
-                    arguments["head"],
-                    arguments.get("base", "main")
-                )
+                elif name == "create_issue":
+                    return await self._create_issue(
+                        arguments["owner"],
+                        arguments["repo"],
+                        arguments["title"],
+                        arguments.get("body", ""),
+                        arguments.get("labels", [])
+                    )
 
-            elif name == "create_issue":
-                return await self._create_issue(
-                    arguments["owner"],
-                    arguments["repo"],
-                    arguments["title"],
-                    arguments.get("body", ""),
-                    arguments.get("labels", [])
-                )
+                elif name == "get_pull_request":
+                    return await self._get_pull_request(
+                        arguments["owner"],
+                        arguments["repo"],
+                        arguments["pr_number"]
+                    )
 
-            elif name == "get_pull_request":
-                return await self._get_pull_request(
-                    arguments["owner"],
-                    arguments["repo"],
-                    arguments["pr_number"]
-                )
+                elif name == "merge_pull_request":
+                    return await self._merge_pull_request(
+                        arguments["owner"],
+                        arguments["repo"],
+                        arguments["pr_number"],
+                        arguments.get("merge_method", "merge")
+                    )
 
-            elif name == "merge_pull_request":
-                return await self._merge_pull_request(
-                    arguments["owner"],
-                    arguments["repo"],
-                    arguments["pr_number"],
-                    arguments.get("merge_method", "merge")
-                )
+                elif name == "list_pull_requests":
+                    return await self._list_pull_requests(
+                        arguments["owner"],
+                        arguments["repo"],
+                        arguments.get("state", "open"),
+                        arguments.get("limit", 10)
+                    )
 
-            elif name == "list_pull_requests":
-                return await self._list_pull_requests(
-                    arguments["owner"],
-                    arguments["repo"],
-                    arguments.get("state", "open"),
-                    arguments.get("limit", 10)
-                )
+                elif name == "create_branch":
+                    return await self._create_branch(
+                        arguments["owner"],
+                        arguments["repo"],
+                        arguments["branch_name"],
+                        arguments.get("from_branch", "main")
+                    )
 
-            elif name == "create_branch":
-                return await self._create_branch(
-                    arguments["owner"],
-                    arguments["repo"],
-                    arguments["branch_name"],
-                    arguments.get("from_branch", "main")
-                )
-
-            else:
-                raise ValueError(f"Unknown tool: {name}")
+                else:
+                    raise ValueError(f"Unknown tool: {name}")
 
     async def _get_repository(self, owner: str, repo: str) -> List[TextContent]:
         """Get repository information"""
@@ -435,6 +445,10 @@ URL: {pr.html_url}
 
 async def main():
     """Main entry point"""
+    # Start metrics server in background
+    start_metrics_server(METRICS_PORT, SERVER_NAME)
+    print(f"GitHub MCP Server starting (metrics on port {METRICS_PORT})")
+
     server = GitHubMCPServer()
     await server.run()
 

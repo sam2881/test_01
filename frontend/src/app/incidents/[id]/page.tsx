@@ -3,7 +3,6 @@
 import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useParams } from 'next/navigation'
-import { PageLayout } from '@/components/layout/PageLayout'
 import { EnterpriseIncidentDetail } from '@/components/incidents/EnterpriseIncidentDetail'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { api } from '@/lib/api'
@@ -42,30 +41,21 @@ export default function IncidentDetailPage() {
 
   if (isLoading) {
     return (
-      <PageLayout title="Incident Details">
-        <div className="flex items-center justify-center h-96">
-          <LoadingSpinner size="lg" text="Loading incident..." />
-        </div>
-      </PageLayout>
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <LoadingSpinner size="lg" text="Loading incident..." />
+      </div>
     )
   }
 
   if (!incident) {
     return (
-      <PageLayout title="Incident Not Found">
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center py-12">
-          <p className="text-gray-500">Incident {incidentId} not found</p>
+          <p className="text-gray-500 text-lg">Incident {incidentId} not found</p>
         </div>
-      </PageLayout>
+      </div>
     )
   }
 
-  return (
-    <PageLayout
-      title={`Incident ${incident.incident_id}`}
-      subtitle={incident.short_description}
-    >
-      <EnterpriseIncidentDetail incident={incident} />
-    </PageLayout>
-  )
+  return <EnterpriseIncidentDetail incident={incident} />
 }

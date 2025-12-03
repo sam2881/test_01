@@ -4,12 +4,22 @@ GCP MCP Server
 Provides MCP protocol access to Google Cloud Platform APIs
 """
 import os
+import sys
 import asyncio
+import time
 from typing import Any, Dict, List, Optional
 from google.cloud import monitoring_v3, compute_v1
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
+
+# Add parent directory for shared modules
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from shared.metrics import start_metrics_server, ToolMetrics, APIMetrics
+
+# Server name and metrics port
+SERVER_NAME = "gcp-mcp"
+METRICS_PORT = int(os.getenv("METRICS_PORT", "8094"))
 
 
 class GCPMCPServer:
@@ -160,48 +170,48 @@ class GCPMCPServer:
         @self.server.call_tool()
         async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
             """Handle tool calls"""
+            with ToolMetrics(SERVER_NAME, name):
+                if name == "list_compute_instances":
+                    return await self._list_compute_instances(arguments["zone"])
 
-            if name == "list_compute_instances":
-                return await self._list_compute_instances(arguments["zone"])
+                elif name == "get_instance_metrics":
+                    return await self._get_instance_metrics(
+                        arguments["instance_name"],
+                        arguments["zone"],
+                        arguments["metric_type"]
+                    )
 
-            elif name == "get_instance_metrics":
-                return await self._get_instance_metrics(
-                    arguments["instance_name"],
-                    arguments["zone"],
-                    arguments["metric_type"]
-                )
+                elif name == "create_alert_policy":
+                    return await self._create_alert_policy(
+                        arguments["display_name"],
+                        arguments["metric_type"],
+                        arguments["threshold"],
+                        arguments.get("notification_channel")
+                    )
 
-            elif name == "create_alert_policy":
-                return await self._create_alert_policy(
-                    arguments["display_name"],
-                    arguments["metric_type"],
-                    arguments["threshold"],
-                    arguments.get("notification_channel")
-                )
+                elif name == "list_alert_policies":
+                    return await self._list_alert_policies()
 
-            elif name == "list_alert_policies":
-                return await self._list_alert_policies()
+                elif name == "get_time_series":
+                    return await self._get_time_series(
+                        arguments["metric_type"],
+                        arguments.get("hours", 1)
+                    )
 
-            elif name == "get_time_series":
-                return await self._get_time_series(
-                    arguments["metric_type"],
-                    arguments.get("hours", 1)
-                )
+                elif name == "start_instance":
+                    return await self._start_instance(
+                        arguments["instance_name"],
+                        arguments["zone"]
+                    )
 
-            elif name == "start_instance":
-                return await self._start_instance(
-                    arguments["instance_name"],
-                    arguments["zone"]
-                )
+                elif name == "stop_instance":
+                    return await self._stop_instance(
+                        arguments["instance_name"],
+                        arguments["zone"]
+                    )
 
-            elif name == "stop_instance":
-                return await self._stop_instance(
-                    arguments["instance_name"],
-                    arguments["zone"]
-                )
-
-            else:
-                raise ValueError(f"Unknown tool: {name}")
+                else:
+                    raise ValueError(f"Unknown tool: {name}")
 
     async def _list_compute_instances(self, zone: str) -> List[TextContent]:
         """List compute instances in zone"""
@@ -456,6 +466,10 @@ class GCPMCPServer:
 
 async def main():
     """Main entry point"""
+    # Start metrics server in background
+    start_metrics_server(METRICS_PORT, SERVER_NAME)
+    print(f"GCP MCP Server starting (metrics on port {METRICS_PORT})")
+
     server = GCPMCPServer()
     await server.run()
 

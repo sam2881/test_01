@@ -4,12 +4,22 @@ Jira MCP Server
 Provides MCP protocol access to Jira APIs
 """
 import os
+import sys
 import asyncio
+import time
 from typing import Any, Dict, List, Optional
 from jira import JIRA
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
+
+# Add parent directory for shared modules
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from shared.metrics import start_metrics_server, ToolMetrics, APIMetrics
+
+# Server name and metrics port
+SERVER_NAME = "jira-mcp"
+METRICS_PORT = int(os.getenv("METRICS_PORT", "8093"))
 
 
 class JiraMCPServer:
@@ -167,46 +177,46 @@ class JiraMCPServer:
         @self.server.call_tool()
         async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
             """Handle tool calls"""
+            with ToolMetrics(SERVER_NAME, name):
+                if name == "get_issue":
+                    return await self._get_issue(arguments["issue_key"])
 
-            if name == "get_issue":
-                return await self._get_issue(arguments["issue_key"])
+                elif name == "create_story":
+                    return await self._create_story(
+                        arguments["project_key"],
+                        arguments["summary"],
+                        arguments["description"],
+                        arguments.get("story_points")
+                    )
 
-            elif name == "create_story":
-                return await self._create_story(
-                    arguments["project_key"],
-                    arguments["summary"],
-                    arguments["description"],
-                    arguments.get("story_points")
-                )
+                elif name == "create_task":
+                    return await self._create_task(
+                        arguments["project_key"],
+                        arguments["summary"],
+                        arguments.get("description", ""),
+                        arguments.get("parent_key")
+                    )
 
-            elif name == "create_task":
-                return await self._create_task(
-                    arguments["project_key"],
-                    arguments["summary"],
-                    arguments.get("description", ""),
-                    arguments.get("parent_key")
-                )
+                elif name == "add_comment":
+                    return await self._add_comment(
+                        arguments["issue_key"],
+                        arguments["comment"]
+                    )
 
-            elif name == "add_comment":
-                return await self._add_comment(
-                    arguments["issue_key"],
-                    arguments["comment"]
-                )
+                elif name == "transition_issue":
+                    return await self._transition_issue(
+                        arguments["issue_key"],
+                        arguments["transition"]
+                    )
 
-            elif name == "transition_issue":
-                return await self._transition_issue(
-                    arguments["issue_key"],
-                    arguments["transition"]
-                )
+                elif name == "search_issues":
+                    return await self._search_issues(
+                        arguments["jql"],
+                        arguments.get("max_results", 50)
+                    )
 
-            elif name == "search_issues":
-                return await self._search_issues(
-                    arguments["jql"],
-                    arguments.get("max_results", 50)
-                )
-
-            else:
-                raise ValueError(f"Unknown tool: {name}")
+                else:
+                    raise ValueError(f"Unknown tool: {name}")
 
     async def _get_issue(self, issue_key: str) -> List[TextContent]:
         """Get issue by key"""
@@ -376,6 +386,10 @@ URL: {self.jira_url}/browse/{issue.key}
 
 async def main():
     """Main entry point"""
+    # Start metrics server in background
+    start_metrics_server(METRICS_PORT, SERVER_NAME)
+    print(f"Jira MCP Server starting (metrics on port {METRICS_PORT})")
+
     server = JiraMCPServer()
     await server.run()
 

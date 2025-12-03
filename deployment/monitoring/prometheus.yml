@@ -2,7 +2,81 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+rule_files: []
+
 scrape_configs:
+  # Prometheus self-monitoring
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
+
+  # Main Orchestrator API
+  - job_name: 'orchestrator'
+    static_configs:
+      - targets: ['host.docker.internal:8000']
+    metrics_path: /metrics
+
+  # MCP Servers
+  - job_name: 'mcp-gateway'
+    static_configs:
+      - targets: ['host.docker.internal:8080']
+    metrics_path: /metrics
+
+  - job_name: 'servicenow-mcp'
+    static_configs:
+      - targets: ['host.docker.internal:8091']
+    metrics_path: /metrics
+
+  - job_name: 'gcp-mcp'
+    static_configs:
+      - targets: ['host.docker.internal:8092']
+    metrics_path: /metrics
+
+  - job_name: 'github-mcp'
+    static_configs:
+      - targets: ['host.docker.internal:8093']
+    metrics_path: /metrics
+
+  - job_name: 'jira-mcp'
+    static_configs:
+      - targets: ['host.docker.internal:8094']
+    metrics_path: /metrics
+
+  # Agent Services
+  - job_name: 'servicenow-agent'
+    static_configs:
+      - targets: ['host.docker.internal:8010']
+    metrics_path: /metrics
+
+  - job_name: 'jira-agent'
+    static_configs:
+      - targets: ['host.docker.internal:8011']
+    metrics_path: /metrics
+
+  - job_name: 'github-agent'
+    static_configs:
+      - targets: ['host.docker.internal:8012']
+    metrics_path: /metrics
+
+  - job_name: 'infra-agent'
+    static_configs:
+      - targets: ['host.docker.internal:8013']
+    metrics_path: /metrics
+
+  # Infrastructure Services
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
+
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres:5432']
+
+  - job_name: 'kafka'
+    static_configs:
+      - targets: ['kafka:9092']

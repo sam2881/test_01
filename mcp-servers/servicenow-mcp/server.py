@@ -4,12 +4,22 @@ ServiceNow MCP Server
 Provides MCP protocol access to ServiceNow APIs
 """
 import os
+import sys
 import asyncio
+import time
 from typing import Any, Dict, List, Optional
 import pysnow
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
+
+# Add parent directory for shared modules
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from shared.metrics import start_metrics_server, ToolMetrics, APIMetrics
+
+# Server name and metrics port
+SERVER_NAME = "servicenow-mcp"
+METRICS_PORT = int(os.getenv("METRICS_PORT", "8091"))
 
 
 class ServiceNowMCPServer:
@@ -140,35 +150,35 @@ class ServiceNowMCPServer:
         @self.server.call_tool()
         async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
             """Handle tool calls"""
+            with ToolMetrics(SERVER_NAME, name):
+                if name == "get_incident":
+                    return await self._get_incident(arguments["incident_id"])
 
-            if name == "get_incident":
-                return await self._get_incident(arguments["incident_id"])
+                elif name == "create_incident":
+                    return await self._create_incident(
+                        arguments["short_description"],
+                        arguments["description"],
+                        arguments.get("priority", "3"),
+                        arguments.get("assigned_to")
+                    )
 
-            elif name == "create_incident":
-                return await self._create_incident(
-                    arguments["short_description"],
-                    arguments["description"],
-                    arguments.get("priority", "3"),
-                    arguments.get("assigned_to")
-                )
+                elif name == "update_incident":
+                    return await self._update_incident(
+                        arguments["incident_id"],
+                        arguments["updates"]
+                    )
 
-            elif name == "update_incident":
-                return await self._update_incident(
-                    arguments["incident_id"],
-                    arguments["updates"]
-                )
+                elif name == "search_incidents":
+                    return await self._search_incidents(
+                        arguments["query"],
+                        arguments.get("limit", 10)
+                    )
 
-            elif name == "search_incidents":
-                return await self._search_incidents(
-                    arguments["query"],
-                    arguments.get("limit", 10)
-                )
+                elif name == "get_incident_comments":
+                    return await self._get_incident_comments(arguments["incident_id"])
 
-            elif name == "get_incident_comments":
-                return await self._get_incident_comments(arguments["incident_id"])
-
-            else:
-                raise ValueError(f"Unknown tool: {name}")
+                else:
+                    raise ValueError(f"Unknown tool: {name}")
 
     async def _get_incident(self, incident_id: str) -> List[TextContent]:
         """Get incident by ID"""
@@ -339,6 +349,10 @@ Close Notes: {incident.get('close_notes', 'None')}
 
 async def main():
     """Main entry point"""
+    # Start metrics server in background
+    start_metrics_server(METRICS_PORT, SERVER_NAME)
+    print(f"ServiceNow MCP Server starting (metrics on port {METRICS_PORT})")
+
     server = ServiceNowMCPServer()
     await server.run()
 

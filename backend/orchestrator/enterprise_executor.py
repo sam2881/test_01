@@ -428,7 +428,7 @@ class EnterpriseExecutor:
         }
 
         payload = {
-            "ref": "master",  # or main, depending on your default branch
+            "ref": "main",  # Use main branch where scripts are located
             "inputs": {k: str(v) for k, v in inputs.items()}  # GitHub requires string inputs
         }
 
