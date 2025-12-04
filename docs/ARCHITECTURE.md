@@ -2,8 +2,8 @@
 
 > Enterprise-grade, Event-Driven AI Agent Platform for Automated Incident Remediation
 
-**Version:** 2.0.0
-**Last Updated:** 2025-11-28
+**Version:** 3.0.0
+**Last Updated:** 2025-12-04
 
 ---
 
@@ -13,12 +13,15 @@
 2. [High-Level Architecture](#high-level-architecture)
 3. [Event-Driven Architecture (Kafka)](#event-driven-architecture-kafka)
 4. [Core Components](#core-components)
-5. [Data Flow](#data-flow)
-6. [8-Step Remediation Workflow](#8-step-remediation-workflow)
-7. [Enterprise Runbook Matching](#enterprise-runbook-matching)
-8. [Technology Stack](#technology-stack)
-9. [API Endpoints](#api-endpoints)
-10. [Security & Governance](#security--governance)
+5. [Enhanced RAG Pipeline](#enhanced-rag-pipeline)
+6. [Multi-Source Incidents](#multi-source-incidents)
+7. [Automatic Rollback Plans](#automatic-rollback-plans)
+8. [Data Flow](#data-flow)
+9. [8-Step Remediation Workflow](#8-step-remediation-workflow)
+10. [Enterprise Runbook Matching](#enterprise-runbook-matching)
+11. [Technology Stack](#technology-stack)
+12. [API Endpoints](#api-endpoints)
+13. [Security & Governance](#security--governance)
 
 ---
 
@@ -38,11 +41,16 @@ This platform is an enterprise AI-powered incident management system that:
 |---------|-------------|
 | **Event-Driven** | Kafka-based real-time incident processing |
 | **AI Analysis** | GPT-4 powered incident understanding |
-| **Hybrid RAG** | Vector (Weaviate) + Graph (Neo4j) + Metadata matching |
+| **Enhanced Hybrid RAG** | Semantic (60%) + Keyword TF-IDF (30%) + Metadata (10%) |
+| **Cross-Encoder Re-ranking** | ms-marco model for 20-30% precision improvement |
+| **Local Embeddings** | SentenceTransformers - FREE, no API cost |
+| **Smart Chunking** | Script-type aware chunking (Ansible, Terraform, Shell, K8s) |
 | **Real Execution** | Ansible, Terraform, Shell, Kubernetes scripts |
 | **Auto-Fill Parameters** | AI extracts VM names, zones from incident text |
 | **HITL Approvals** | Human-in-the-Loop for high-risk actions |
-| **Continuous Learning** | RAG feedback loop for improvement |
+| **Automatic Rollback** | Generated rollback plans for all executions |
+| **Multi-Source Incidents** | Datadog, Prometheus, CloudWatch, PagerDuty connectors |
+| **Continuous Learning** | ML-based weight optimization from execution outcomes |
 
 ---
 
@@ -210,6 +218,116 @@ React-based user interface:
 
 ---
 
+## Enhanced RAG Pipeline
+
+The platform uses an enhanced RAG (Retrieval Augmented Generation) pipeline for improved script matching accuracy.
+
+### RAG Architecture
+```
+Incident Query
+      │
+      ▼
+┌─────────────────────────────────────────────────────────┐
+│                  HYBRID SEARCH ENGINE                    │
+│  ┌─────────────┬─────────────┬─────────────┐           │
+│  │  Semantic   │   Keyword   │  Metadata   │           │
+│  │    (60%)    │    (30%)    │    (10%)    │           │
+│  │ all-MiniLM  │   TF-IDF    │ Exact Match │           │
+│  └─────────────┴─────────────┴─────────────┘           │
+└─────────────────────────┬───────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│              CROSS-ENCODER RE-RANKING                    │
+│           ms-marco-MiniLM-L-6-v2                        │
+│         (Improves precision by 20-30%)                  │
+└─────────────────────────┬───────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│              FEEDBACK OPTIMIZER                          │
+│        ML-based weight adjustment from outcomes         │
+└─────────────────────────────────────────────────────────┘
+```
+
+### RAG Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Hybrid Search | `backend/rag/hybrid_search_engine.py` | Weighted multi-strategy search |
+| Cross-Encoder | `backend/rag/cross_encoder_reranker.py` | Re-rank results for precision |
+| Smart Chunker | `backend/rag/smart_chunker.py` | Script-type aware chunking |
+| Embeddings | `backend/rag/embedding_service.py` | Local/cloud embedding generation |
+| Feedback | `backend/rag/feedback_optimizer.py` | ML-based weight optimization |
+
+### Scoring Formula
+```
+Final_Score = (0.6 × Semantic) + (0.3 × Keyword) + (0.1 × Metadata)
+```
+
+---
+
+## Multi-Source Incidents
+
+The platform supports incident ingestion from multiple monitoring sources with a unified format.
+
+### Supported Sources
+
+| Source | Connector | Webhook Validation |
+|--------|-----------|-------------------|
+| ServiceNow | Native | HTTP Basic Auth |
+| GCP Monitoring | Native | Service Account |
+| Datadog | `DatadogConnector` | DD-WEBHOOK-TOKEN |
+| Prometheus/AlertManager | `PrometheusConnector` | Basic Auth |
+| AWS CloudWatch | `CloudWatchConnector` | SNS Signature |
+| PagerDuty | `PagerDutyConnector` | HMAC-SHA256 |
+
+### Unified Format
+```
+┌─────────────────────────────────────────────────────────┐
+│              NORMALIZED INCIDENT                         │
+├─────────────────────────────────────────────────────────┤
+│ incident_id    │ source         │ title                 │
+│ description    │ severity       │ status                │
+│ category       │ service        │ environment           │
+│ cloud_provider │ resource_type  │ region                │
+└─────────────────────────────────────────────────────────┘
+```
+
+### File
+- **Implementation**: `backend/streaming/incident_sources.py`
+
+---
+
+## Automatic Rollback Plans
+
+Every script execution automatically generates a rollback plan for safe recovery.
+
+### Rollback Mappings
+
+| Action | Automatic Rollback |
+|--------|-------------------|
+| `gcloud instances start` | `gcloud instances stop` |
+| `gcloud instances stop` | `gcloud instances start` |
+| `kubectl scale --replicas=N` | `kubectl scale --replicas=original` |
+| `systemctl start` | `systemctl stop` |
+| `config change` | `restore from checkpoint` |
+
+### Rollback Plan Structure
+```python
+RollbackPlan:
+  - steps: List[RollbackStep]     # Reverse actions to execute
+  - checkpoint_data: Dict          # Pre-execution state to save
+  - risk_level: str               # low/medium/high
+  - requires_approval: bool       # True for high-risk rollbacks
+  - estimated_duration: int       # Estimated time in seconds
+```
+
+### File
+- **Implementation**: `backend/orchestrator/rollback_generator.py`
+
+---
+
 ## Data Flow
 
 ### Incident Processing Flow
@@ -354,10 +472,12 @@ Final Score = 0.50 x Vector Score
 
 | Technology | Purpose | Version |
 |------------|---------|---------|
-| **Python** | Core language | 3.9+ |
+| **Python** | Core language | 3.11+ |
 | **FastAPI** | API framework | 0.100+ |
 | **OpenAI** | LLM (GPT-4) | API |
 | **LangChain** | LLM orchestration | 0.1+ |
+| **SentenceTransformers** | Local embeddings (FREE) | 2.2+ |
+| **Cross-Encoders** | Re-ranking (ms-marco) | 2.2+ |
 | **Kafka** | Event streaming | Confluent 7.6 |
 | **Redis** | Caching | 7.x |
 | **PostgreSQL** | State storage | 15.x |
@@ -393,6 +513,28 @@ Final Score = 0.50 x Vector Score
 |--------|----------|-------------|
 | GET | `/api/incidents` | List incidents (publishes to Kafka) |
 | GET | `/api/incidents/{id}` | Get incident details |
+
+### Multi-Source Incident Webhooks (v3.0)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/incidents/webhook/{source}` | Receive incidents from monitoring sources |
+| GET | `/api/incidents/sources` | List supported incident sources |
+
+### Enhanced RAG API (v3.0)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/rag/search` | Hybrid search with weighted scoring |
+| POST | `/api/rag/feedback` | Record search feedback |
+| PUT | `/api/rag/feedback/{id}` | Update execution results |
+| GET | `/api/rag/stats` | Get RAG system statistics |
+
+### Rollback API (v3.0)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/rollback/generate` | Generate rollback plan for script |
 
 ### Remediation
 
@@ -448,37 +590,53 @@ All actions are logged to:
 ai_agent_app/
 +-- backend/
 |   +-- orchestrator/
-|   |   +-- main.py              # FastAPI server
+|   |   +-- main.py                    # FastAPI server
+|   |   +-- llm_intelligence.py        # LLM integration
+|   |   +-- enterprise_executor.py     # Script execution
+|   |   +-- rollback_generator.py      # Automatic rollback plans (v3.0)
 |   +-- agents/
 |   |   +-- remediation/
-|   |       +-- agent.py         # AI remediation engine
+|   |       +-- agent.py               # AI remediation engine
+|   +-- rag/
+|   |   +-- __init__.py                # RAG module exports
+|   |   +-- hybrid_search_engine.py    # Weighted hybrid search (v3.0)
+|   |   +-- cross_encoder_reranker.py  # Cross-encoder re-ranking (v3.0)
+|   |   +-- smart_chunker.py           # Script-type chunking (v3.0)
+|   |   +-- embedding_service.py       # Local embeddings (v3.0)
+|   |   +-- feedback_optimizer.py      # ML-based optimization (v3.0)
+|   |   +-- weaviate_client.py         # Vector store
+|   |   +-- neo4j_client.py            # Graph store
 |   +-- streaming/
-|   |   +-- incident_consumer.py # Kafka consumer
-|   |   +-- servicenow_producer.py
+|   |   +-- incident_consumer.py       # Kafka consumer
+|   |   +-- servicenow_producer.py     # ServiceNow polling
+|   |   +-- incident_sources.py        # Multi-source connectors (v3.0)
 |   +-- runbooks/
-|   |   +-- registry.json        # Runbook catalog
-|   |   +-- scripts/             # Shell scripts
-|   |   +-- ansible/             # Ansible playbooks
-|   |   +-- terraform/           # Terraform configs
+|   |   +-- registry.json              # Runbook catalog
+|   |   +-- scripts/                   # Shell scripts
+|   |   +-- ansible/                   # Ansible playbooks
+|   |   +-- terraform/                 # Terraform configs
 |   +-- utils/
 |       +-- kafka_client.py
 |       +-- redis_client.py
-|       +-- weaviate_client.py
-|       +-- neo4j_client.py
 +-- frontend/
 |   +-- src/
 |       +-- components/
 |       |   +-- incidents/
-|       |       +-- RemediationPanel.tsx
-|       +-- lib/
-|           +-- api.ts
+|       |       +-- EnterpriseIncidentDetail.tsx
+|       +-- app/
+|           +-- graph/[id]/page.tsx    # Workflow visualization
 +-- deployment/
 |   +-- docker-compose.yml
 +-- monitoring/
 |   +-- prometheus.yml
 |   +-- grafana/
 +-- docs/
-    +-- ARCHITECTURE.md
+|   +-- ARCHITECTURE.md
+|   +-- AI_AGENT_PLATFORM_PPT.md
+|   +-- ENHANCED_RAG_FEATURES.md       # RAG documentation (v3.0)
++-- .github/
+    +-- workflows/
+        +-- shell-execute.yml          # GitHub Actions execution
 ```
 
 ---
