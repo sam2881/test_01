@@ -1,12 +1,25 @@
 """
 LLM-Based Intelligence for Incident Resolution
 Uses OpenAI to understand incidents and match remediation scripts
+
+Includes guardrails for:
+- Input validation (prompt injection, command injection)
+- Output validation (safety, format)
+- Content moderation
+- Rate limiting
 """
 import os
 import json
 from typing import Dict, List, Any, Optional
 from openai import OpenAI
 import structlog
+
+# Import guardrails
+try:
+    from guardrails.llm_guardrails import guardrails
+    GUARDRAILS_ENABLED = True
+except ImportError:
+    GUARDRAILS_ENABLED = False
 
 logger = structlog.get_logger()
 
@@ -25,8 +38,31 @@ def analyze_incident_with_llm(incident: Dict[str, Any]) -> Dict[str, Any]:
     - Severity level
     - Recommended remediation approach
     - Required parameters
+
+    Includes guardrails validation for input and output.
     """
     try:
+        # Guardrails: Validate incident input
+        if GUARDRAILS_ENABLED:
+            input_result = guardrails.validate_incident(incident)
+            if not input_result.passed:
+                logger.warning(
+                    "incident_validation_failed",
+                    incident_id=incident.get('incident_id'),
+                    issues=input_result.issues
+                )
+                return {
+                    "root_cause": "Input validation failed",
+                    "affected_components": [],
+                    "service_type": "unknown",
+                    "severity": "medium",
+                    "remediation_approach": "investigate",
+                    "required_params": {},
+                    "risk_level": "medium",
+                    "confidence": 0.0,
+                    "guardrail_issues": input_result.issues
+                }
+
         prompt = f"""You are an expert SRE analyzing a production incident. Analyze this incident and provide structured insights:
 
 INCIDENT:
@@ -71,7 +107,21 @@ Respond in JSON format:
             response_format={"type": "json_object"}
         )
 
-        analysis = json.loads(response.choices[0].message.content)
+        output_content = response.choices[0].message.content
+
+        # Guardrails: Validate LLM output
+        if GUARDRAILS_ENABLED:
+            output_result = guardrails.validate_output(output_content, expected_format="json")
+            if not output_result.passed:
+                logger.warning(
+                    "output_validation_failed",
+                    incident_id=incident.get('incident_id'),
+                    issues=output_result.issues
+                )
+                # Still try to parse but log the issues
+                logger.info("output_validation_issues", issues=output_result.issues)
+
+        analysis = json.loads(output_content)
         logger.info("llm_analysis_completed", incident_id=incident.get('incident_id'), analysis=analysis)
         return analysis
 

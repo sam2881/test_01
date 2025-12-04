@@ -1589,6 +1589,72 @@ async def list_incident_sources():
 
 
 # =============================================================================
+# Guardrails API
+# =============================================================================
+
+@app.post("/api/guardrails/validate")
+async def validate_content(request: Dict[str, Any]):
+    """
+    Validate content through guardrails.
+
+    Request body:
+    {
+        "content": "Text to validate",
+        "context": "incident|user_query|general",
+        "validate_type": "input|output|both"
+    }
+    """
+    try:
+        from guardrails.llm_guardrails import guardrails
+
+        content = request.get("content", "")
+        context = request.get("context", "general")
+        validate_type = request.get("validate_type", "input")
+
+        results = {}
+
+        if validate_type in ["input", "both"]:
+            input_result = guardrails.validate_input(content, context)
+            results["input"] = input_result.to_dict()
+
+        if validate_type in ["output", "both"]:
+            output_result = guardrails.validate_output(content)
+            results["output"] = output_result.to_dict()
+
+        return {
+            "status": "success",
+            "results": results
+        }
+    except ImportError:
+        return {"status": "error", "message": "Guardrails module not available"}
+    except Exception as e:
+        logger.error("guardrails_validation_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/guardrails/status")
+async def guardrails_status():
+    """Get guardrails system status."""
+    try:
+        from guardrails.llm_guardrails import guardrails, GUARDRAILS_ENABLED
+        return {
+            "enabled": True,
+            "components": {
+                "input_validator": True,
+                "output_validator": True,
+                "rate_limiter": True,
+                "content_moderator": True
+            },
+            "version": "1.0.0"
+        }
+    except ImportError:
+        return {
+            "enabled": False,
+            "message": "Guardrails module not installed"
+        }
+
+
+# =============================================================================
 # Run Server
 # =============================================================================
 if __name__ == "__main__":

@@ -563,9 +563,27 @@ Final Score = 0.50 x Vector Score
 | POST | `/api/langgraph/node/{id}` | Execute specific workflow node |
 | GET | `/api/langgraph/workflow/{id}` | Get workflow state |
 
+### Guardrails API (v3.0)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/guardrails/validate` | Validate content through guardrails |
+| GET | `/api/guardrails/status` | Get guardrails system status |
+
 ---
 
 ## Security & Governance
+
+### LLM Guardrails (v3.0)
+
+The platform includes comprehensive LLM guardrails for input/output validation:
+
+| Component | Description |
+|-----------|-------------|
+| **Input Validator** | Prompt injection detection, command injection prevention |
+| **Output Validator** | Format validation, harmful content detection |
+| **Content Moderator** | Topic filtering, sensitive content detection |
+| **Rate Limiter** | Request throttling per user/session |
 
 ### Risk-Based Approval Matrix
 
@@ -610,6 +628,9 @@ ai_agent_app/
 |   |   +-- remediation/
 |   |       +-- agent.py               # AI remediation engine
 |   |       +-- enterprise_matcher.py  # Advanced script matching
+|   +-- guardrails/
+|   |   +-- __init__.py                # Guardrails module exports
+|   |   +-- llm_guardrails.py          # LLM input/output validation (v3.0)
 |   +-- rag/
 |   |   +-- __init__.py                # RAG module exports
 |   |   +-- hybrid_search.py           # Original hybrid search
