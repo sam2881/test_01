@@ -536,22 +536,32 @@ Final Score = 0.50 x Vector Score
 |--------|----------|-------------|
 | POST | `/api/rollback/generate` | Generate rollback plan for script |
 
-### Remediation
+### Scripts & Execution
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/remediation/full` | Run full remediation analysis |
-| GET | `/api/remediation/runbooks` | List available runbooks |
-| POST | `/api/runbooks/{id}/execute-real` | Execute runbook on infrastructure |
-| POST | `/api/runbooks/sync-from-github` | Sync runbooks from GitHub |
+| POST | `/api/scripts/match` | Match scripts to incident |
+| GET | `/api/scripts` | List available scripts |
+| GET | `/api/scripts/{id}` | Get script details |
+| POST | `/api/execute` | Execute script on infrastructure |
+| GET | `/api/execute/{id}` | Get execution status |
+| POST | `/api/workflow/run` | Run full remediation workflow |
 
-### HITL Approvals
+### Approvals (HITL)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/hitl/approvals/pending` | Get pending approvals |
-| POST | `/api/hitl/approvals/{id}/approve-plan` | Approve remediation plan |
-| POST | `/api/hitl/approvals/{id}/reject-plan` | Reject remediation plan |
+| GET | `/api/approvals` | Get pending approvals |
+| POST | `/api/approvals/{id}/approve` | Approve execution |
+| POST | `/api/approvals/{id}/reject` | Reject execution |
+
+### LangGraph Workflow
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/langgraph/definition` | Get workflow graph definition |
+| POST | `/api/langgraph/node/{id}` | Execute specific workflow node |
+| GET | `/api/langgraph/workflow/{id}` | Get workflow state |
 
 ---
 
@@ -590,53 +600,73 @@ All actions are logged to:
 ai_agent_app/
 +-- backend/
 |   +-- orchestrator/
-|   |   +-- main.py                    # FastAPI server
+|   |   +-- main.py                    # FastAPI server (62KB)
 |   |   +-- llm_intelligence.py        # LLM integration
-|   |   +-- enterprise_executor.py     # Script execution
+|   |   +-- enterprise_executor.py     # Script execution via GitHub Actions
+|   |   +-- langgraph_orchestrator.py  # 18-node workflow orchestration
+|   |   +-- hybrid_matcher.py          # Enterprise runbook matching
 |   |   +-- rollback_generator.py      # Automatic rollback plans (v3.0)
+|   |   +-- safety_validator.py        # Script safety validation
+|   |   +-- metrics.py                 # Prometheus metrics
 |   +-- agents/
 |   |   +-- remediation/
 |   |       +-- agent.py               # AI remediation engine
+|   |       +-- enterprise_matcher.py  # Advanced script matching
 |   +-- rag/
 |   |   +-- __init__.py                # RAG module exports
-|   |   +-- hybrid_search_engine.py    # Weighted hybrid search (v3.0)
+|   |   +-- hybrid_search.py           # Original hybrid search
+|   |   +-- hybrid_search_engine.py    # Enhanced hybrid search (v3.0)
 |   |   +-- cross_encoder_reranker.py  # Cross-encoder re-ranking (v3.0)
 |   |   +-- smart_chunker.py           # Script-type chunking (v3.0)
 |   |   +-- embedding_service.py       # Local embeddings (v3.0)
 |   |   +-- feedback_optimizer.py      # ML-based optimization (v3.0)
-|   |   +-- weaviate_client.py         # Vector store
-|   |   +-- neo4j_client.py            # Graph store
+|   |   +-- weaviate_client.py         # Vector store client
+|   |   +-- neo4j_client.py            # Graph store client
+|   |   +-- script_library_indexer.py  # Script indexing
 |   +-- streaming/
 |   |   +-- incident_consumer.py       # Kafka consumer
 |   |   +-- servicenow_producer.py     # ServiceNow polling
+|   |   +-- gcp_vm_monitor.py          # GCP VM monitoring
 |   |   +-- incident_sources.py        # Multi-source connectors (v3.0)
+|   |   +-- kafka_producer.py          # Generic Kafka producer
 |   +-- runbooks/
-|   |   +-- registry.json              # Runbook catalog
+|   |   +-- registry.json              # Runbook catalog (15KB)
 |   |   +-- scripts/                   # Shell scripts
 |   |   +-- ansible/                   # Ansible playbooks
 |   |   +-- terraform/                 # Terraform configs
+|   |   +-- kubernetes/                # Kubernetes manifests
 |   +-- utils/
-|       +-- kafka_client.py
-|       +-- redis_client.py
+|       +-- kafka_client.py            # Kafka utilities
+|       +-- redis_client.py            # Redis cache client
+|       +-- postgres_client.py         # PostgreSQL client
+|       +-- weaviate_client.py         # Weaviate utilities
+|       +-- neo4j_client.py            # Neo4j utilities
 +-- frontend/
 |   +-- src/
 |       +-- components/
 |       |   +-- incidents/
-|       |       +-- EnterpriseIncidentDetail.tsx
+|       |       +-- EnterpriseIncidentDetail.tsx  # Main incident view
+|       |       +-- RemediationPanel.tsx          # Remediation UI (100KB)
+|       |       +-- IncidentWorkflow.tsx          # Workflow visualization
 |       +-- app/
-|           +-- graph/[id]/page.tsx    # Workflow visualization
+|           +-- graph/[id]/page.tsx    # LangGraph workflow visualization
 +-- deployment/
-|   +-- docker-compose.yml
+|   +-- docker-compose.yml             # Infrastructure services
+|   +-- k8s/                           # Kubernetes configs
 +-- monitoring/
-|   +-- prometheus.yml
-|   +-- grafana/
+|   +-- prometheus.yml                 # Prometheus config
+|   +-- grafana/                       # Grafana dashboards
+|   +-- alerts/                        # Alerting rules
 +-- docs/
-|   +-- ARCHITECTURE.md
-|   +-- AI_AGENT_PLATFORM_PPT.md
-|   +-- ENHANCED_RAG_FEATURES.md       # RAG documentation (v3.0)
+|   +-- ARCHITECTURE.md                # This file
+|   +-- AI_AGENT_PLATFORM_PPT.md       # Presentation-style guide
+|   +-- ENHANCED_RAG_FEATURES.md       # RAG v3.0 documentation
 +-- .github/
     +-- workflows/
-        +-- shell-execute.yml          # GitHub Actions execution
+        +-- shell-execute.yml          # Shell script execution
+        +-- ansible-execute.yml        # Ansible playbook execution
+        +-- terraform-execute.yml      # Terraform execution
+        +-- kubernetes-execute.yml     # Kubernetes operations
 ```
 
 ---
