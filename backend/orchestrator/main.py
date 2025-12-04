@@ -1449,6 +1449,174 @@ async def get_workflow_state(workflow_id: str):
     return WORKFLOW_STATES[workflow_id]
 
 # =============================================================================
+# Enhanced RAG API Endpoints
+# =============================================================================
+
+@app.post("/api/rag/search")
+async def enhanced_rag_search(request: dict):
+    """
+    Enhanced hybrid search with weighted scoring.
+    Combines semantic, keyword, and metadata search.
+    """
+    try:
+        from rag.hybrid_search_engine import hybrid_search_engine, SearchWeights
+        from rag.cross_encoder_reranker import reranker_with_fallback
+
+        query = request.get("query", "")
+        metadata = request.get("metadata", {})
+        top_k = request.get("top_k", 10)
+        use_reranking = request.get("rerank", True)
+
+        # Custom weights if provided
+        weights = None
+        if "weights" in request:
+            w = request["weights"]
+            weights = SearchWeights(
+                semantic=w.get("semantic", 0.6),
+                keyword=w.get("keyword", 0.3),
+                metadata=w.get("metadata", 0.1)
+            )
+
+        # Perform hybrid search
+        results = hybrid_search_engine.search(
+            query=query,
+            query_metadata=metadata,
+            top_k=top_k * 2 if use_reranking else top_k,
+            weights=weights
+        )
+
+        # Re-rank if enabled
+        if use_reranking and results:
+            candidates = [r.to_dict() for r in results]
+            results = reranker_with_fallback.rerank(query, candidates, top_k)
+        else:
+            results = [r.to_dict() for r in results[:top_k]]
+
+        return {"results": results, "count": len(results)}
+
+    except Exception as e:
+        logger.error("rag_search_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/rag/feedback")
+async def record_rag_feedback(request: dict):
+    """Record feedback for search/execution outcomes."""
+    try:
+        from rag.feedback_optimizer import feedback_optimizer
+
+        feedback_id = feedback_optimizer.record_feedback(
+            incident_id=request.get("incident_id", ""),
+            incident_type=request.get("incident_type", "unknown"),
+            severity=request.get("severity", "medium"),
+            service=request.get("service", ""),
+            environment=request.get("environment", ""),
+            query=request.get("query", ""),
+            weights_used=request.get("weights_used", {}),
+            recommended_script_id=request.get("script_id", ""),
+            recommendation_rank=request.get("rank", 1)
+        )
+
+        return {"feedback_id": feedback_id, "status": "recorded"}
+
+    except Exception as e:
+        logger.error("feedback_record_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/rag/feedback/{feedback_id}")
+async def update_rag_feedback(feedback_id: str, request: dict):
+    """Update feedback with execution results."""
+    try:
+        from rag.feedback_optimizer import feedback_optimizer
+
+        feedback_optimizer.update_execution_result(
+            feedback_id=feedback_id,
+            success=request.get("success", False),
+            execution_time_seconds=request.get("execution_time", 0),
+            error_message=request.get("error", "")
+        )
+
+        return {"status": "updated"}
+
+    except Exception as e:
+        logger.error("feedback_update_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/rag/stats")
+async def get_rag_stats():
+    """Get RAG system statistics."""
+    try:
+        from rag.feedback_optimizer import feedback_optimizer
+
+        return {
+            "feedback_stats": feedback_optimizer.get_stats(),
+            "script_stats": feedback_optimizer.get_script_stats()
+        }
+
+    except Exception as e:
+        logger.error("stats_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/rollback/generate")
+async def generate_rollback_plan(request: dict):
+    """Generate a rollback plan for a script execution."""
+    try:
+        from orchestrator.rollback_generator import rollback_generator
+
+        plan = rollback_generator.generate_rollback_plan(
+            script_id=request.get("script_id", ""),
+            script_content=request.get("script_content", ""),
+            script_metadata=request.get("metadata", {}),
+            execution_parameters=request.get("parameters", {})
+        )
+
+        return plan.to_dict()
+
+    except Exception as e:
+        logger.error("rollback_generation_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/incidents/webhook/{source}")
+async def receive_incident_webhook(source: str, request: dict):
+    """Receive incidents from external monitoring sources."""
+    try:
+        from streaming.incident_sources import incident_source_manager
+
+        # Normalize the incident
+        normalized = incident_source_manager.normalize_incident(source, request)
+
+        # Publish to Kafka
+        await kafka_client.publish(
+            topic="external.incidents",
+            message=normalized.to_kafka_message()
+        )
+
+        return {
+            "status": "received",
+            "incident_id": normalized.incident_id,
+            "source": source
+        }
+
+    except Exception as e:
+        logger.error("webhook_error", source=source, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/incidents/sources")
+async def list_incident_sources():
+    """List supported incident sources."""
+    try:
+        from streaming.incident_sources import incident_source_manager
+        return {"sources": incident_source_manager.get_supported_sources()}
+    except Exception as e:
+        return {"sources": ["servicenow", "gcp", "datadog", "prometheus", "cloudwatch", "pagerduty"]}
+
+
+# =============================================================================
 # Run Server
 # =============================================================================
 if __name__ == "__main__":
