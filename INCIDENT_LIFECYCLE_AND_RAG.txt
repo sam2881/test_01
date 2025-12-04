@@ -1,0 +1,375 @@
+================================================================================
+        AI AGENT PLATFORM v3.0 - INCIDENT LIFECYCLE & RAG GUIDE
+================================================================================
+
+This document explains the complete incident lifecycle from generation to
+resolution, and how RAG (Retrieval Augmented Generation) is prepared and used.
+
+================================================================================
+                        PART 1: RAG PREPARATION
+================================================================================
+
+RAG (Retrieval Augmented Generation) enables intelligent script matching by
+combining vector search with knowledge retrieval.
+
+STEP 1: RUNBOOK REGISTRY PREPARATION
+------------------------------------
+Location: /home/samrattidke600/ai_agent_app/registry.json
+
+The registry contains remediation scripts with metadata:
+{
+  "scripts": [
+    {
+      "script_id": "script-gcp-restart-vm",
+      "name": "Restart GCP VM Instance",
+      "description": "Restarts a stopped/unresponsive GCP VM",
+      "type": "gcloud",
+      "category": "compute",
+      "cloud_provider": "gcp",
+      "service": "compute",
+      "action": "restart",
+      "risk_level": "medium",
+      "keywords": ["vm", "restart", "compute", "gcp"],
+      "github_workflow": "shell-execute.yml",
+      "required_params": ["instance_name", "zone", "project"]
+    }
+  ]
+}
+
+
+STEP 2: SCRIPT INDEXING
+-----------------------
+File: backend/rag/script_library_indexer.py
+
+Run indexing:
+    cd backend
+    python3 rag/script_library_indexer.py
+
+This creates vector embeddings for all scripts and stores them in Weaviate.
+
+
+STEP 3: ENHANCED RAG COMPONENTS (v3.0)
+--------------------------------------
+
+A) HYBRID SEARCH ENGINE (backend/rag/hybrid_search_engine.py)
+   - Combines 3 search strategies:
+     * Semantic Search (60%): Vector similarity using embeddings
+     * Keyword Search (30%): TF-IDF exact term matching
+     * Metadata Search (10%): Exact field matching
+
+   Formula: Final_Score = (0.6 * Semantic) + (0.3 * Keyword) + (0.1 * Metadata)
+
+B) CROSS-ENCODER RE-RANKING (backend/rag/cross_encoder_reranker.py)
+   - Initial search returns top 20 results
+   - Cross-encoder scores each query-document pair
+   - Re-ranks to find top 5 most relevant scripts
+
+C) SMART CHUNKER (backend/rag/smart_chunker.py)
+   - Chunks scripts based on type:
+     * Ansible → Tasks, Plays, Handlers
+     * Terraform → Resources, Modules
+     * Shell → Functions, Sections
+     * Kubernetes → Deployments, Services
+
+D) LOCAL EMBEDDINGS (backend/rag/embedding_service.py)
+   - Model: all-MiniLM-L6-v2 (384 dimensions)
+   - Free, fast, works offline
+   - Automatic caching
+
+E) FEEDBACK OPTIMIZER (backend/rag/feedback_optimizer.py)
+   - Learns from execution outcomes
+   - Adjusts search weights per incident type
+   - Improves accuracy over time
+
+
+================================================================================
+                    PART 2: INCIDENT LIFECYCLE
+================================================================================
+
+STAGE 1: INCIDENT GENERATION
+----------------------------
+Sources:
+  - ServiceNow     : Polling via API
+  - Datadog        : Webhook to /api/incidents/webhook/datadog
+  - Prometheus     : Webhook to /api/incidents/webhook/prometheus
+  - AWS CloudWatch : Webhook to /api/incidents/webhook/cloudwatch
+  - PagerDuty      : Webhook to /api/incidents/webhook/pagerduty
+  - GCP Monitoring : Polling via API
+
+Multi-source normalization (backend/streaming/incident_sources.py):
+All incidents are normalized to unified format:
+{
+  "incident_id": "INC0012345",
+  "source": "servicenow",
+  "title": "VM instance down",
+  "description": "Production VM not responding...",
+  "severity": "high",
+  "category": "infrastructure",
+  "service": "compute",
+  "environment": "production",
+  "cloud_provider": "gcp",
+  "timestamp": "2024-12-04T10:00:00Z"
+}
+
+
+STAGE 2: KAFKA EVENT STREAMING
+------------------------------
+Incident is published to Kafka topic: servicenow.incidents
+
+Producer: backend/streaming/servicenow_producer.py (polls ServiceNow)
+Consumer: backend/streaming/incident_consumer.py (processes events)
+
+
+STAGE 3: LLM GUARDRAILS VALIDATION
+----------------------------------
+File: backend/guardrails/llm_guardrails.py
+
+Before processing, incidents are validated:
+  - Prompt injection detection
+  - Command injection check
+  - PII detection (SSN, credit card, email, phone)
+  - Content moderation
+
+API: POST /api/guardrails/validate
+
+
+STAGE 4: LLM INCIDENT ANALYSIS
+------------------------------
+File: backend/orchestrator/llm_intelligence.py
+
+The LLM analyzes the incident to extract:
+  - Root cause analysis
+  - Affected components
+  - Service type (gcp, kubernetes, database, etc.)
+  - Severity level
+  - Remediation approach
+  - Required parameters
+  - Risk assessment
+
+
+STAGE 5: RAG SCRIPT MATCHING
+----------------------------
+API: POST /api/rag/search
+API: POST /api/scripts/match
+
+Process:
+1. Query the hybrid search engine with incident context
+2. Apply metadata filters (cloud_provider, service, environment)
+3. Re-rank results with cross-encoder
+4. Return top 5 matching scripts with confidence scores
+
+
+STAGE 6: LANGGRAPH WORKFLOW ORCHESTRATION
+-----------------------------------------
+File: backend/orchestrator/langgraph_orchestrator.py
+
+18-node workflow:
+  1. incident_intake      → Receive and validate incident
+  2. incident_analysis    → LLM-based analysis
+  3. severity_assessment  → Determine urgency
+  4. script_search        → RAG-based script search
+  5. script_matching      → Match scripts to incident
+  6. parameter_extraction → Extract required params
+  7. risk_evaluation      → Assess execution risk
+  8. approval_routing     → Route for approval if needed
+  9. human_review         → HITL approval gate
+  10. pre_execution_check → Validate prerequisites
+  11. checkpoint_creation → Create rollback checkpoint
+  12. script_execution    → Execute via GitHub Actions
+  13. execution_monitor   → Monitor progress
+  14. result_validation   → Verify success
+  15. rollback_decision   → Decide if rollback needed
+  16. incident_update     → Update ServiceNow
+  17. feedback_collection → Collect outcome feedback
+  18. completion          → Mark workflow complete
+
+API: GET /api/langgraph/definition
+
+
+STAGE 7: ROLLBACK PLAN GENERATION
+---------------------------------
+File: backend/orchestrator/rollback_generator.py
+API: POST /api/rollback/generate
+
+For each action, generates reverse action:
+  - VM Start → VM Stop
+  - Service Stop → Service Start
+  - K8s Scale Up → K8s Scale Down
+  - Config Change → Restore Backup
+
+Includes:
+  - Checkpoint data to save
+  - Risk level assessment
+  - Approval requirements
+
+
+STAGE 8: HUMAN-IN-THE-LOOP (HITL) APPROVAL
+------------------------------------------
+API: GET /api/approvals
+API: POST /api/approvals/{id}/approve
+API: POST /api/approvals/{id}/reject
+
+Risk-Based Approval Matrix:
+| Risk Level | Auto-Approve | Approvers Required |
+|------------|--------------|-------------------|
+| Low        | Yes          | None              |
+| Medium     | No           | 1 approver        |
+| High       | No           | 2 approvers       |
+| Critical   | No           | 2 + manager       |
+
+
+STAGE 9: SCRIPT EXECUTION
+-------------------------
+File: backend/orchestrator/enterprise_executor.py
+API: POST /api/execute
+
+Execution via GitHub Actions:
+  - shell-execute.yml     → Shell scripts
+  - ansible-execute.yml   → Ansible playbooks
+  - terraform-execute.yml → Terraform configs
+  - kubernetes-execute.yml → K8s operations
+
+Execution includes:
+  - Parameter validation
+  - Pre-execution checks
+  - Checkpoint creation
+  - Progress monitoring
+  - Result capture
+
+
+STAGE 10: FEEDBACK LOOP
+-----------------------
+API: POST /api/rag/feedback
+API: PUT /api/rag/feedback/{id}
+
+After execution:
+1. Record script recommendation
+2. Track execution success/failure
+3. Update search weights
+4. Improve future recommendations
+
+
+STAGE 11: INCIDENT RESOLUTION
+-----------------------------
+API: PUT /api/incidents/{id}/resolve
+
+Final steps:
+1. Update ServiceNow incident status
+2. Add work notes with resolution details
+3. Close incident if successful
+4. Trigger rollback if failed
+
+
+================================================================================
+                        PART 3: API ENDPOINTS SUMMARY
+================================================================================
+
+HEALTH & STATUS
+---------------
+GET  /health                        → Service health check
+GET  /api/guardrails/status         → Guardrails system status
+
+INCIDENTS
+---------
+GET  /api/incidents                 → List ServiceNow incidents
+GET  /api/incidents/{id}            → Get incident details
+POST /api/incidents/webhook/{source}→ Receive webhook from source
+GET  /api/incidents/sources         → List supported sources
+
+SCRIPTS & RAG
+-------------
+GET  /api/scripts                   → List available scripts
+POST /api/scripts/match             → Match scripts to incident
+POST /api/rag/search                → Enhanced RAG search
+POST /api/rag/feedback              → Record search feedback
+PUT  /api/rag/feedback/{id}         → Update execution result
+GET  /api/rag/stats                 → Get RAG statistics
+
+EXECUTION
+---------
+POST /api/execute                   → Execute script
+GET  /api/executions/{id}           → Get execution status
+POST /api/rollback/generate         → Generate rollback plan
+
+APPROVALS
+---------
+GET  /api/approvals                 → List pending approvals
+POST /api/approvals/{id}/approve    → Approve execution
+POST /api/approvals/{id}/reject     → Reject execution
+
+LANGGRAPH
+---------
+GET  /api/langgraph/definition      → Get workflow definition
+POST /api/langgraph/node/{id}       → Execute specific node
+GET  /api/langgraph/workflow/{id}   → Get workflow state
+
+GUARDRAILS
+----------
+POST /api/guardrails/validate       → Validate content
+GET  /api/guardrails/status         → Get guardrails status
+
+
+================================================================================
+                        PART 4: QUICK START GUIDE
+================================================================================
+
+1. START ALL SERVICES:
+   ./start-all.sh
+
+2. ACCESS DASHBOARD:
+   http://localhost:3002
+
+3. API DOCUMENTATION:
+   http://localhost:8000/docs
+
+4. STOP ALL SERVICES:
+   ./stop-all.sh
+
+5. VIEW LOGS:
+   tail -f logs/backend.log
+   tail -f logs/consumer.log
+   tail -f logs/frontend.log
+
+
+================================================================================
+                        PART 5: TECHNOLOGY STACK
+================================================================================
+
+Backend:
+  - FastAPI (Python 3.10+)
+  - LangGraph (18-node workflow)
+  - DSPy (Prompt optimization)
+  - OpenAI GPT-4 (LLM)
+
+RAG:
+  - Weaviate (Vector database)
+  - Neo4j (Graph database)
+  - Sentence Transformers (Embeddings)
+  - Cross-Encoder (Re-ranking)
+
+Streaming:
+  - Apache Kafka (Event streaming)
+  - Redis (Caching)
+  - PostgreSQL (Audit logs)
+
+Frontend:
+  - Next.js 14
+  - React 18
+  - TailwindCSS
+
+Infrastructure:
+  - Docker Compose
+  - GitHub Actions
+  - GCP Compute Engine
+
+Monitoring:
+  - Prometheus
+  - Grafana
+  - LangFuse
+
+
+================================================================================
+                              END OF DOCUMENT
+================================================================================
+Version: 3.0.0
+Date: December 2024

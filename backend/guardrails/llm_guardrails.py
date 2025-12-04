@@ -588,3 +588,6 @@ class LLMGuardrails:
 # =============================================================================
 
 guardrails = LLMGuardrails()
+
+# Flag to indicate guardrails are available
+GUARDRAILS_ENABLED = True

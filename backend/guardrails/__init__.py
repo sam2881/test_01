@@ -4,7 +4,8 @@ from .llm_guardrails import (
     InputValidator,
     OutputValidator,
     GuardrailResult,
-    guardrails
+    guardrails,
+    GUARDRAILS_ENABLED
 )
 
 __all__ = [
@@ -12,5 +13,6 @@ __all__ = [
     "InputValidator",
     "OutputValidator",
     "GuardrailResult",
-    "guardrails"
+    "guardrails",
+    "GUARDRAILS_ENABLED"
 ]
