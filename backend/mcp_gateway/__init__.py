@@ -1,1 +1,0 @@
-# MCP HTTP Gateway

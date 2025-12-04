@@ -9,6 +9,7 @@ import uuid
 import subprocess
 import httpx
 import re
+import base64
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 from fastapi import FastAPI, HTTPException
@@ -87,16 +88,6 @@ class ApprovalRequest(BaseModel):
     approver: str
     comments: str = ""
 
-class WorkflowStatus(BaseModel):
-    execution_id: str
-    incident_id: str
-    status: str
-    current_step: int
-    total_steps: int
-    steps: List[Dict[str, Any]]
-    started_at: str
-    completed_at: str = ""
-
 # =============================================================================
 # Load Script Registry
 # =============================================================================
@@ -120,30 +111,28 @@ SNOW_INSTANCE = os.getenv("SNOW_INSTANCE_URL", "")
 SNOW_USER = os.getenv("SNOW_USERNAME", "")
 SNOW_PASS = os.getenv("SNOW_PASSWORD", "")
 
+def _get_snow_base_url() -> str:
+    """Get normalized ServiceNow base URL."""
+    base_url = SNOW_INSTANCE.rstrip('/')
+    if not base_url.startswith('http'):
+        base_url = f"https://{base_url}"
+    return base_url
+
+def _get_snow_headers() -> Dict[str, str]:
+    """Get ServiceNow auth headers."""
+    auth_b64 = base64.b64encode(f"{SNOW_USER}:{SNOW_PASS}".encode('ascii')).decode('ascii')
+    return {
+        "Authorization": f"Basic {auth_b64}",
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    }
+
 async def fetch_servicenow_incidents() -> List[Dict]:
     """Fetch incidents from ServiceNow using REST API"""
     try:
-        import httpx
-        import base64
-
-        # Extract base URL
-        base_url = SNOW_INSTANCE.rstrip('/')
-        if not base_url.startswith('http'):
-            base_url = f"https://{base_url}"
-
-        # API endpoint
+        base_url = _get_snow_base_url()
         url = f"{base_url}/api/now/table/incident"
-
-        # Basic auth
-        auth_string = f"{SNOW_USER}:{SNOW_PASS}"
-        auth_bytes = auth_string.encode('ascii')
-        auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
-
-        headers = {
-            "Authorization": f"Basic {auth_b64}",
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
+        headers = _get_snow_headers()
 
         params = {
             "sysparm_limit": "50",
@@ -186,26 +175,9 @@ async def fetch_servicenow_incidents() -> List[Dict]:
 async def update_servicenow_incident(incident_id: str, updates: Dict) -> bool:
     """Update incident in ServiceNow using REST API"""
     try:
-        import httpx
-        import base64
-
-        # Extract base URL
-        base_url = SNOW_INSTANCE.rstrip('/')
-        if not base_url.startswith('http'):
-            base_url = f"https://{base_url}"
-
-        # First, get the sys_id for this incident
+        base_url = _get_snow_base_url()
         search_url = f"{base_url}/api/now/table/incident"
-
-        auth_string = f"{SNOW_USER}:{SNOW_PASS}"
-        auth_bytes = auth_string.encode('ascii')
-        auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
-
-        headers = {
-            "Authorization": f"Basic {auth_b64}",
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
+        headers = _get_snow_headers()
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             # Get sys_id

@@ -604,9 +604,7 @@ ai_agent_app/
 |   |   +-- llm_intelligence.py        # LLM integration
 |   |   +-- enterprise_executor.py     # Script execution via GitHub Actions
 |   |   +-- langgraph_orchestrator.py  # 18-node workflow orchestration
-|   |   +-- hybrid_matcher.py          # Enterprise runbook matching
 |   |   +-- rollback_generator.py      # Automatic rollback plans (v3.0)
-|   |   +-- safety_validator.py        # Script safety validation
 |   |   +-- metrics.py                 # Prometheus metrics
 |   +-- agents/
 |   |   +-- remediation/
