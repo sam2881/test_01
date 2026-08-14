@@ -1,334 +1,250 @@
-# AI Agent Platform for Enterprise Incident Remediation
+# Enterprise Agentic AI Incident Remediation Platform
 
-> Enterprise-grade, Event-Driven AI Agent Platform for Automated Incident Remediation
+> **Flagship Data + AI Architecture Project** — governed multi-agent incident triage, hybrid RAG, knowledge graphs, risk-aware remediation, human approval, controlled execution, rollback, verification, and end-to-end observability.
 
-[![Version](https://img.shields.io/badge/version-3.0.0-blue.svg)](https://github.com/sam2881/test_01)
-[![Python](https://img.shields.io/badge/python-3.11+-green.svg)](https://python.org)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+This repository explores how an enterprise incident workflow can move from **ServiceNow/Jira/monitoring event → context retrieval → AI-assisted diagnosis → remediation planning → policy/risk gates → human approval → controlled execution → verification and learning**.
 
----
+The project is presented from a **Lead Data & AI Architect** perspective. The emphasis is not simply on calling an LLM: it is on the surrounding architecture required to make agentic workflows observable, governed, stateful, testable, and safe enough to integrate with real operational systems.
 
-## Overview
-
-The AI Agent Platform is an enterprise-grade system that automates incident detection, analysis, and remediation. It uses GPT-4 for intelligent analysis, hybrid RAG for script matching, and GitHub Actions for secure execution.
-
-### Key Features
-
-| Feature | Description |
-|---------|-------------|
-| **Event-Driven Architecture** | Kafka-based real-time incident processing |
-| **LangGraph Orchestration** | 18-node workflow with 8 phases |
-| **Enhanced Hybrid RAG** | Semantic (60%) + Keyword (30%) + Metadata (10%) search |
-| **Cross-Encoder Re-ranking** | ms-marco model for 20-30% improved precision |
-| **Local Embeddings** | SentenceTransformers - FREE, no API cost |
-| **Multi-Source Incidents** | ServiceNow, GCP, Datadog, Prometheus, CloudWatch, PagerDuty |
-| **Automatic Rollback** | Generated rollback plans for safe execution |
-| **Human-in-the-Loop (HITL)** | Approval workflow for high-risk actions |
-| **Secure Execution** | GitHub Actions for auditable script execution |
+> **Portfolio note:** This is an architecture/MVP project. Capabilities described here should not be interpreted as production deployment claims, certified controls, or measured business outcomes unless explicitly identified as measured.
 
 ---
 
-## Architecture
+## Architecture at a glance
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                              FRONTEND (Next.js)                           │
-│        http://localhost:3002 | Incidents | Workflows | Approvals         │
-└──────────────────────────────────────┬───────────────────────────────────┘
-                                       │
-                                       ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│                         API GATEWAY (FastAPI)                             │
-│                        http://localhost:8000                              │
-│   /api/incidents | /api/rag | /api/rollback | /api/langgraph | /api/mcp  │
-└──────────────────────────────────────┬───────────────────────────────────┘
-                                       │
-           ┌───────────────────────────┼───────────────────────────┐
-           │                           │                           │
-           ▼                           ▼                           ▼
-┌──────────────────┐     ┌─────────────────────────┐     ┌────────────────┐
-│   Multi-Source   │     │   Enhanced RAG v2.0     │     │    LangGraph   │
-│    Incidents     │     │   Hybrid + Re-ranking   │     │   18 Nodes     │
-│  (6 connectors)  │     │   + Feedback Loop       │     │   8 Phases     │
-└──────────────────┘     └─────────────────────────┘     └────────────────┘
-           │                           │                           │
-           └───────────────────────────┼───────────────────────────┘
-                                       │
-                                       ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│                           DATA LAYER                                      │
-│   PostgreSQL | Redis | Weaviate (Vector) | Neo4j (Graph) | Kafka         │
-└──────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    SRC[ServiceNow · Jira · Monitoring] --> ING[Incident Intake & Normalization]
+    ING --> ORCH[LangGraph / Main Orchestrator]
+    ORCH --> PA[Platform Agent]
+    ORCH --> DA[Data Agent]
+    ORCH --> AA[Airflow Agent]
+    PA --> RAG[Hybrid RAG + Re-ranking]
+    DA --> RAG
+    AA --> RAG
+    RAG --> V[(Vector Store)]
+    RAG --> KG[(Neo4j Knowledge Graph)]
+    ORCH --> RISK[Risk / Blast-Radius Assessment]
+    RISK --> PLAN[Remediation + Rollback Plan]
+    PLAN --> POLICY{Policy / Approval Gate}
+    POLICY -->|approved| EXEC[Controlled Tool Execution]
+    EXEC --> VERIFY[Verification]
+    VERIFY --> OBS[Logs · Metrics · Traces · Audit]
+    VERIFY --> MEM[(Outcome / Memory / Feedback)]
+    MEM --> RAG
 ```
 
+### Core principle
+
+**AI proposes and reasons; policy-controlled deterministic systems validate, authorize and execute.**
+
+Consequential infrastructure or data-platform actions should not be triggered merely because an LLM produced a high-confidence answer.
+
 ---
 
-## Quick Start
+## What the platform demonstrates
 
-### Prerequisites
+| Architecture domain | Capability |
+| --- | --- |
+| Incident orchestration | Multi-step stateful workflow with specialist-agent collaboration |
+| Enterprise RAG | Semantic + lexical/metadata retrieval, re-ranking and historical remediation context |
+| Knowledge graph | Neo4j relationships for services, incidents, dependencies and prior outcomes |
+| Agent/tool integration | MCP-style tool boundaries and external-system connectors |
+| Risk governance | Risk scoring, blast-radius thinking and policy gates |
+| Human-in-the-loop | Approval before consequential/high-risk execution |
+| Controlled remediation | Auditable automation through constrained execution mechanisms |
+| Rollback & verification | Recovery plan plus post-action validation |
+| State & memory | Workflow state, operational history and retrieval feedback |
+| Observability | Agent/tool traces, logs, metrics, execution evidence and audit history |
 
-- Python 3.11+
-- Node.js 18+
-- Docker & Docker Compose
-- OpenAI API key
-- ServiceNow instance (optional)
-- GCP service account (optional)
+---
 
-### 1. Clone Repository
+## Enterprise incident lifecycle
 
-```bash
-git clone https://github.com/sam2881/test_01.git
-cd ai_agent_app
+```mermaid
+flowchart TD
+    I[1. Incident Created] --> N[2. Normalize & Correlate]
+    N --> C[3. Gather Context]
+    C --> R[4. Retrieve Similar Incidents / Runbooks]
+    R --> A[5. Diagnose & Classify]
+    A --> P[6. Generate Remediation Plan]
+    P --> S[7. Risk / Safety Validation]
+    S --> H{8. Approval Required?}
+    H -->|yes| HA[Human Approval]
+    H -->|no, policy permits| E[Controlled Execution]
+    HA --> E
+    E --> V[9. Verify Outcome]
+    V --> RB{Successful?}
+    RB -->|no| ROL[Rollback / Escalate]
+    RB -->|yes| L[10. Record Evidence & Learn]
 ```
 
-### 2. Start Infrastructure
+The design goal is full lifecycle traceability: **what happened, what evidence was retrieved, what the agents proposed, why an action was approved, what executed, and whether it actually fixed the incident**.
 
-```bash
-cd deployment
-sudo docker compose up -d
+---
+
+## RAG & knowledge architecture
+
+The project explores a multi-stage retrieval pipeline rather than relying only on vector similarity:
+
+1. Normalize incident text and operational metadata.
+2. Retrieve candidate runbooks, scripts and historical incidents.
+3. Combine semantic, lexical and metadata signals.
+4. Re-rank the candidate set for the specific incident context.
+5. Enrich results with graph relationships and dependency context.
+6. Pass evidence — not an unconstrained knowledge dump — to the reasoning workflow.
+7. Record execution/verification outcomes for future evaluation.
+
+### Retrieval technologies represented
+
+`Weaviate / Vector Search` · `Neo4j` · `SentenceTransformers` · `Hybrid Retrieval` · `Cross-Encoder Re-ranking` · `Metadata Filtering` · `Feedback / Evaluation`
+
+Retrieval weights and thresholds are implementation/configuration choices and should be tuned against an evaluation dataset rather than treated as universal constants.
+
+---
+
+## State and memory model
+
+A production agent platform needs more than chat history.
+
+| State type | Examples |
+| --- | --- |
+| Workflow state | current phase, pending actions, approval state, retries |
+| Incident context | source event, affected service, environment, severity |
+| Retrieved evidence | runbooks, similar incidents, scripts, graph relationships |
+| Decision evidence | model/tool versions, risk result, approval reason |
+| Execution evidence | action, parameters, timestamps, result, rollback state |
+| Long-term knowledge | verified remediation outcomes and reusable operational context |
+
+State should have explicit ownership, persistence, retention, authorization and versioning rules.
+
+---
+
+## Governance and production safety
+
+For production environments, the architecture should enforce controls outside the LLM boundary:
+
+- Least-privilege service identities
+- Typed and allow-listed tools
+- Environment-aware authorization
+- Human approval for consequential production actions
+- Input/output schema validation
+- Script/module allow-listing and provenance
+- Secrets isolation
+- Idempotency and retry controls
+- Rollback or compensating actions
+- Post-execution verification
+- Immutable audit evidence
+- Prompt/model/tool/policy version tracking
+- Adversarial and safety evaluation
+
+---
+
+## Observability
+
+Agentic systems need both **software telemetry** and **decision telemetry**.
+
+```text
+Incident ID / Trace ID
+        │
+        ├── Intake & normalization
+        ├── Agent / workflow transitions
+        ├── Retrieval queries + evidence IDs
+        ├── LLM/model invocation metadata
+        ├── Tool calls and authorization result
+        ├── Human approval decision
+        ├── Execution / rollback
+        └── Verification + final outcome
 ```
 
-This starts:
-- PostgreSQL (port 5432)
-- Redis (port 6379)
-- Kafka (port 29092)
-- Weaviate (port 8080)
-- Neo4j (port 7474)
+Useful evaluation dimensions include retrieval quality, classification accuracy, remediation relevance, tool-call correctness, approval/escalation rate, execution success, reopened incidents, latency, cost and safety-policy violations.
 
-### 3. Configure Environment
+---
 
-```bash
-# Create .env file
-cat > .env << 'EOF'
-# OpenAI
-OPENAI_API_KEY=sk-your-key-here
+## Technology stack
 
-# ServiceNow
-SNOW_INSTANCE_URL=https://your-instance.service-now.com
-SNOW_USERNAME=admin
-SNOW_PASSWORD=your-password
+### AI & orchestration
 
-# GCP (optional)
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
-GCP_PROJECT=your-project-id
+**Python · LangGraph · LangChain patterns · LLM APIs · SentenceTransformers · RAG · Re-ranking · MCP-style tools**
 
-# Kafka
-KAFKA_BOOTSTRAP_SERVERS=localhost:29092
+### Data & state
 
-# Database
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/ai_agent
-REDIS_URL=redis://localhost:6379
-EOF
+**PostgreSQL · Redis · Weaviate · Neo4j · Apache Kafka**
+
+### API & UI
+
+**FastAPI · Next.js · TypeScript**
+
+### Platform & execution
+
+**Docker · Kubernetes · GitHub Actions · GCP integration patterns · CI/CD**
+
+### Operations
+
+**Observability · Audit Trails · Health Checks · Evaluation · Human-in-the-Loop · Rollback**
+
+---
+
+## Repository map
+
+```text
+test_01/
+├── backend/                  # orchestration, RAG, streaming and service logic
+├── frontend/                 # operator / workflow UI
+├── mcp-servers/              # tool integration layer
+├── deployment/               # runtime/infrastructure configuration
+├── monitoring/               # observability assets
+├── data/                     # project/evaluation data
+├── docs/                     # architecture and detailed documentation
+├── scripts/                  # controlled automation / project scripts
+├── .github/                  # CI/CD and execution workflows
+├── CODE_DOCUMENTATION.md     # detailed implementation documentation
+├── INCIDENT_LIFECYCLE_AND_RAG.txt
+├── registry.json             # project/tool registry metadata
+├── start-all.sh
+├── stop-all.sh
+└── README.md
 ```
 
-### 4. Start Backend
-
-```bash
-cd backend
-pip install -r requirements.txt
-python3 orchestrator/main.py
-```
-
-### 5. Start Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-### 6. Access Services
-
-| Service | URL |
-|---------|-----|
-| Frontend | http://localhost:3002 |
-| Backend API | http://localhost:8000 |
-| API Docs | http://localhost:8000/docs |
-| Neo4j Browser | http://localhost:7474 |
+The repository name `test_01` is historical. The project itself is treated as a serious architecture portfolio asset; a future repository rename can improve discoverability without changing the underlying design.
 
 ---
 
-## Enhanced RAG Pipeline v2.0
+## Production evaluation roadmap
 
-The platform uses an advanced RAG system for accurate script matching:
+Before considering autonomous remediation mature, I would evaluate:
 
-### Hybrid Search
+- Incident classification precision/recall
+- Retrieval Recall@K / Precision@K / MRR or task-specific relevance metrics
+- Re-ranking lift against a labelled incident/runbook set
+- Remediation-plan correctness
+- Unsafe or unauthorized tool-call rate
+- Human override/rejection rate
+- Execution success and rollback success
+- Reopened incident rate
+- End-to-end resolution latency
+- Cost per resolved workflow
+- Trace completeness and auditability
+- Adversarial/prompt-injection resistance
 
-```
-Final_Score = (0.6 × Semantic) + (0.3 × Keyword) + (0.1 × Metadata)
-```
-
-| Component | Weight | Technology | Purpose |
-|-----------|--------|------------|---------|
-| Semantic | 60% | all-MiniLM-L6-v2 | Meaning-based similarity |
-| Keyword | 30% | TF-IDF | Exact term matching |
-| Metadata | 10% | Exact match | cloud_provider, service, environment |
-
-### Cross-Encoder Re-ranking
-
-Two-stage retrieval for improved precision:
-1. **Stage 1**: Fast bi-encoder search → Top 20 results
-2. **Stage 2**: Cross-encoder re-ranking → Top 5 results
-
-Uses `ms-marco-MiniLM-L-6-v2` for 20-30% precision improvement.
-
-### Feedback Optimizer
-
-System learns optimal weights from execution outcomes:
-- Records search results and execution success/failure
-- Adjusts weights per incident type using ML
-- Continuously improves over time
+Targets should be clearly separated from measured results.
 
 ---
 
-## Multi-Source Incidents
+## Portfolio relevance
 
-Unified incident ingestion from 6 monitoring sources:
+This project demonstrates architecture skills aligned with:
 
-| Source | Connector | Webhook Endpoint |
-|--------|-----------|------------------|
-| ServiceNow | Native | `/api/incidents` |
-| GCP Monitoring | Native | `/api/gcp/alerts` |
-| Datadog | `DatadogConnector` | `/api/incidents/webhook/datadog` |
-| Prometheus | `PrometheusConnector` | `/api/incidents/webhook/prometheus` |
-| CloudWatch | `CloudWatchConnector` | `/api/incidents/webhook/cloudwatch` |
-| PagerDuty | `PagerDutyConnector` | `/api/incidents/webhook/pagerduty` |
+**Lead Data & AI Architect · AI Architect · GenAI Architect · Agentic AI Architect · Data Platform Architect · Principal Data Engineer · Cloud AI Architect**
 
-All incidents are normalized to a unified format for processing.
+It connects **enterprise operations + data platforms + RAG + knowledge graphs + AI agents + governance + observability** into one end-to-end system rather than treating each technology as an isolated demo.
 
 ---
 
-## Automatic Rollback Plans
+### Search keywords
 
-Every script execution generates an automatic rollback plan:
-
-| Action | Rollback |
-|--------|----------|
-| Start VM | Stop VM |
-| Scale Up K8s | Scale Down to original |
-| Config Change | Restore from checkpoint |
-| Create Firewall | Delete Firewall |
+`Agentic AI` · `AI Agents` · `Multi-Agent Systems` · `Generative AI` · `RAG` · `Hybrid RAG` · `LangGraph` · `LangChain` · `MCP` · `Neo4j` · `Weaviate` · `Vector Database` · `Knowledge Graph` · `FastAPI` · `Kafka` · `Kubernetes` · `GCP` · `ServiceNow` · `Jira` · `Incident Management` · `AIOps` · `LLMOps` · `AI Governance` · `AI Observability` · `Human-in-the-Loop` · `Enterprise AI Architecture`
 
 ---
 
-## API Endpoints
-
-### Core APIs
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/incidents` | List incidents |
-| GET | `/api/incidents/{id}` | Get incident details |
-| POST | `/api/langgraph/node/{id}` | Execute workflow node |
-
-### Enhanced RAG APIs
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/rag/search` | Hybrid search with re-ranking |
-| POST | `/api/rag/feedback` | Record search feedback |
-| GET | `/api/rag/stats` | Get RAG statistics |
-
-### Rollback APIs
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/rollback/generate` | Generate rollback plan |
-
-### Multi-Source Webhooks
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/incidents/webhook/{source}` | Receive external incidents |
-| GET | `/api/incidents/sources` | List supported sources |
-
----
-
-## Technology Stack
-
-### Backend
-- **Python 3.11** - Core language
-- **FastAPI** - API framework
-- **LangGraph** - Workflow orchestration
-- **OpenAI GPT-4** - LLM intelligence
-- **SentenceTransformers** - Local embeddings (FREE)
-- **Apache Kafka** - Event streaming
-
-### Frontend
-- **Next.js 14** - React framework
-- **TypeScript** - Type safety
-- **TailwindCSS** - Styling
-
-### Data Stores
-- **PostgreSQL** - Relational data
-- **Redis** - Caching
-- **Weaviate** - Vector store
-- **Neo4j** - Knowledge graph
-
-### Execution
-- **GitHub Actions** - Secure script execution
-- **MCP Servers** - Tool integration
-
----
-
-## Project Structure
-
-```
-ai_agent_app/
-├── backend/
-│   ├── orchestrator/          # FastAPI server & workflow
-│   │   ├── main.py
-│   │   ├── llm_intelligence.py
-│   │   └── rollback_generator.py
-│   ├── rag/                   # Enhanced RAG v2.0
-│   │   ├── hybrid_search_engine.py
-│   │   ├── cross_encoder_reranker.py
-│   │   ├── smart_chunker.py
-│   │   ├── embedding_service.py
-│   │   └── feedback_optimizer.py
-│   └── streaming/             # Event processing
-│       ├── incident_consumer.py
-│       └── incident_sources.py
-├── frontend/                  # Next.js UI
-├── deployment/                # Docker configs
-├── docs/                      # Documentation
-│   ├── ARCHITECTURE.md
-│   ├── AI_AGENT_PLATFORM_PPT.md
-│   └── ENHANCED_RAG_FEATURES.md
-└── .github/workflows/         # GitHub Actions
-```
-
----
-
-## Documentation
-
-- [Architecture Guide](docs/ARCHITECTURE.md) - System architecture details
-- [Enhanced RAG Features](docs/ENHANCED_RAG_FEATURES.md) - RAG v2.0 documentation
-- [Platform Overview](docs/AI_AGENT_PLATFORM_PPT.md) - Comprehensive PPT-style guide
-
----
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
----
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
----
-
-## Contact
-
-- **Repository**: [https://github.com/sam2881/test_01](https://github.com/sam2881/test_01)
-- **Issues**: [GitHub Issues](https://github.com/sam2881/test_01/issues)
-
----
-
-*Version 3.0.0 - December 2024*
+*Architecture portfolio project by Samrat Tidke — Lead Data & AI Architect.*
